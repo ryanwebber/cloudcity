@@ -243,17 +243,4 @@ impl CameraController {
             .truncate()
             .normalize()
     }
-
-    fn get_up_vector(&self) -> Vec3 {
-        let rotation_matrix = Mat4::from_quat(Quat::from_euler(
-            glam::EulerRot::XYZ,
-            self.rotation.x,
-            self.rotation.y,
-            self.rotation.z,
-        ));
-
-        (rotation_matrix * Vec3::new(0.0, 1.0, 0.0).extend(1.0))
-            .truncate()
-            .normalize()
-    }
 }

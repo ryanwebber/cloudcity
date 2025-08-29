@@ -11,6 +11,7 @@ struct InstanceInput {
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) color: vec4<f32>,
+    @location(1) model_pos: vec3<f32>,
 }
 
 struct CameraUniforms {
@@ -58,11 +59,20 @@ fn vs_main(
     
     return VertexOutput(
         clip_pos,
-        vec4<f32>(r, g, b, a)
+        vec4<f32>(r, g, b, a),
+        model.position
     );
 }
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+    // Calculate distance from the center of the hexagon (0,0,0 in model space)
+    let distance = length(input.model_pos);
+
+    // Discard fragments outside the circle (radius 0.5 in model space)
+    if distance > 0.5 {
+        discard;
+    }
+
     return input.color;
 }
