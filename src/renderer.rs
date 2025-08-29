@@ -11,7 +11,7 @@ pub struct Renderer {
     surface_config: wgpu::SurfaceConfiguration,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    quad: Quad,
+    hexagon: Hexagon,
     point_cloud_pipeline: PointCloudPipeline,
     instance_buffer: wgpu::Buffer,
     instance_count: u32,
@@ -72,7 +72,7 @@ impl Renderer {
             view_formats: vec![],
         };
 
-        let quad = Quad::create(&device);
+        let hexagon = Hexagon::create(&device);
         let point_cloud_pipeline = PointCloudPipeline::new(&device, surface_format);
 
         // Create instance data with random points
@@ -126,7 +126,7 @@ impl Renderer {
             surface_config: config,
             device,
             queue,
-            quad,
+            hexagon,
             point_cloud_pipeline,
             instance_buffer,
             instance_count: instances.len() as u32,
@@ -264,13 +264,15 @@ impl Renderer {
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
             // Set vertex and index buffers
-            render_pass.set_vertex_buffer(0, self.quad.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(0, self.hexagon.vertex_buffer.slice(..));
             render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-            render_pass
-                .set_index_buffer(self.quad.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.set_index_buffer(
+                self.hexagon.index_buffer.slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
 
             // Draw instances
-            render_pass.draw_indexed(0..6, 0, 0..self.instance_count);
+            render_pass.draw_indexed(0..12, 0, 0..self.instance_count);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -333,32 +335,51 @@ impl Renderer {
     }
 }
 
-struct Quad {
+struct Hexagon {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
 }
 
-impl Quad {
+impl Hexagon {
     const VERTICIES: &[storage::buffer::Vertex] = &[
+        // Vertex 0 (Top-left)
         storage::buffer::Vertex {
-            position: glam::f32::vec3(-1.0, 1.0, 0.0),
-            uvs: glam::f32::vec2(0.0, 1.0),
+            position: glam::f32::vec3(-0.5, 0.866, 0.0),
+            uvs: glam::f32::vec2(0.0, 0.866),
         },
+        // Vertex 1 (Top-right)
         storage::buffer::Vertex {
-            position: glam::f32::vec3(-1.0, -1.0, 0.0),
-            uvs: glam::f32::vec2(0.0, 0.0),
+            position: glam::f32::vec3(0.5, 0.866, 0.0),
+            uvs: glam::f32::vec2(1.0, 0.866),
         },
+        // Vertex 2 (Right)
         storage::buffer::Vertex {
-            position: glam::f32::vec3(1.0, -1.0, 0.0),
-            uvs: glam::f32::vec2(1.0, 0.0),
+            position: glam::f32::vec3(1.0, 0.0, 0.0),
+            uvs: glam::f32::vec2(1.0, 0.5),
         },
+        // Vertex 3 (Bottom-right)
         storage::buffer::Vertex {
-            position: glam::f32::vec3(1.0, 1.0, 0.0),
-            uvs: glam::f32::vec2(1.0, 1.0),
+            position: glam::f32::vec3(0.5, -0.866, 0.0),
+            uvs: glam::f32::vec2(1.0, 0.134),
+        },
+        // Vertex 4 (Bottom-left)
+        storage::buffer::Vertex {
+            position: glam::f32::vec3(-0.5, -0.866, 0.0),
+            uvs: glam::f32::vec2(0.0, 0.134),
+        },
+        // Vertex 5 (Left)
+        storage::buffer::Vertex {
+            position: glam::f32::vec3(-1.0, 0.0, 0.0),
+            uvs: glam::f32::vec2(0.0, 0.5),
         },
     ];
 
-    const INDICES: &[u32] = &[0, 1, 2, 2, 3, 0];
+    const INDICES: &[u32] = &[
+        0, 5, 1, // Triangle 1: top-left, left, top-right
+        1, 5, 2, // Triangle 2: top-right, left, right
+        2, 5, 4, // Triangle 3: right, left, bottom-left
+        2, 4, 3, // Triangle 4: right, bottom-left, bottom-right
+    ];
 
     fn create(device: &wgpu::Device) -> Self {
         Self {

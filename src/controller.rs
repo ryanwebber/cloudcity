@@ -177,7 +177,7 @@ impl CameraController {
         // Calculate forward and right vectors based on current rotation
         let forward_vec = self.get_forward_vector();
         let right_vec = self.get_right_vector();
-        let up_vec = self.get_up_vector(); // Use camera's local up vector instead of world up
+        let up_vec = Vec3::Y; // Use world up
 
         // Update position based on input
         if self.forward {
