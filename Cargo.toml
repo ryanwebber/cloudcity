@@ -1,0 +1,17 @@
+[package]
+name = "cloudcity"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.99"
+bytemuck = { version = "1.23.2", features = ["derive"] }
+clap = { version = "4.5.46", features = ["derive"] }
+egui-wgpu = { version = "0.32.1", features = ["winit"] }
+encase = { version = "0.11.2", features = ["glam"] }
+env_logger = "0.11.8"
+glam = "0.30.5"
+log = "0.4.27"
+pollster = "0.4.0"
+wgpu = "25.0.2"
+winit = "0.30.12"
