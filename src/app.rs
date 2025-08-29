@@ -57,8 +57,8 @@ impl ApplicationHandler<()> for App {
                     focal_distance: 10.5,
                 },
                 transform: Transform {
-                    position: f32::Vec3::new(0.0, 2.0, -8.0),
-                    rotation: f32::Vec3::new(8.0, 0.0, 0.0),
+                    position: f32::Vec3::new(0.0, 0.0, 0.0),
+                    rotation: f32::Vec3::new(0.0, 0.0, 0.0),
                     scale: f32::Vec3::new(1.0, 1.0, 1.0),
                 },
                 clipping: Clipping {

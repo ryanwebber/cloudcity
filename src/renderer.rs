@@ -17,6 +17,8 @@ pub struct Renderer {
     instance_count: u32,
     camera_uniforms: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    depth_texture: wgpu::Texture,
+    depth_texture_view: wgpu::TextureView,
 }
 
 impl Renderer {
@@ -101,6 +103,24 @@ impl Renderer {
 
         surface.configure(&device, &config);
 
+        // Create depth texture
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Depth Texture"),
+            size: wgpu::Extent3d {
+                width: config.width,
+                height: config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+
+        let depth_texture_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+
         Ok(Self {
             surface,
             surface_config: config,
@@ -112,6 +132,8 @@ impl Renderer {
             instance_count: instances.len() as u32,
             camera_uniforms,
             camera_bind_group,
+            depth_texture,
+            depth_texture_view,
         })
     }
 
@@ -135,14 +157,23 @@ impl Renderer {
 
                 let position = unit_sphere * rng.gen_range(5.0..20.0);
 
-                let r = rng.gen_range(100..255);
-                let g = rng.gen_range(100..255);
-                let b = rng.gen_range(100..255);
+                let color = if position.z < 0.0 {
+                    storage::instance::Color::from_rgba(0, 12, 255, 255)
+                } else {
+                    // Create depth-based color gradient: red (near) to green (far)
+                    let distance_from_camera = position.length();
+                    let normalized_distance = (distance_from_camera - 5.0) / 15.0; // Normalize to 0.0-1.0
+                    let normalized_distance = normalized_distance.clamp(0.0, 1.0);
 
-                storage::instance::Instance {
-                    position,
-                    color: storage::instance::Color::from_rgba(r, g, b, 255),
-                }
+                    // Red component decreases with distance, Green component increases with distance
+                    let r = ((1.0 - normalized_distance) * 255.0) as u8;
+                    let g = (normalized_distance * 255.0) as u8;
+                    let b = 0; // No blue component
+
+                    storage::instance::Color::from_rgba(r, g, b, 255)
+                };
+
+                storage::instance::Instance { position, color }
             })
             .collect()
     }
@@ -155,6 +186,26 @@ impl Renderer {
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
         self.surface.configure(&self.device, &self.surface_config);
+
+        // Recreate depth texture with new size
+        self.depth_texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Depth Texture"),
+            size: wgpu::Extent3d {
+                width: new_size.width,
+                height: new_size.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+
+        self.depth_texture_view = self
+            .depth_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
     }
 
     pub fn render(
@@ -196,7 +247,14 @@ impl Renderer {
                         },
                     }),
                 ],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_texture_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
