@@ -282,9 +282,9 @@ impl Renderer {
     fn update_camera_uniforms(&mut self, camera: &types::Camera) {
         // Convert camera transform to matrix (not used in current implementation)
         let _transform_matrix = glam::f32::Mat4::from_translation(camera.transform.position)
-            * glam::f32::Mat4::from_rotation_x(camera.transform.rotation.x.to_radians())
-            * glam::f32::Mat4::from_rotation_y(camera.transform.rotation.y.to_radians())
-            * glam::f32::Mat4::from_rotation_z(camera.transform.rotation.z.to_radians())
+            * glam::f32::Mat4::from_rotation_x(camera.transform.rotation.x)
+            * glam::f32::Mat4::from_rotation_y(camera.transform.rotation.y)
+            * glam::f32::Mat4::from_rotation_z(camera.transform.rotation.z)
             * glam::f32::Mat4::from_scale(camera.transform.scale);
 
         // Create view-projection matrix
@@ -300,11 +300,15 @@ impl Renderer {
             camera.clipping.far,
         );
 
-        // For a camera, we want to look from the camera position towards the negative Z direction
-        // The view matrix should transform world coordinates to camera coordinates
+        // Calculate forward direction based on camera rotation
+        let rotation_matrix = glam::f32::Mat4::from_rotation_y(camera.transform.rotation.y)
+            * glam::f32::Mat4::from_rotation_x(camera.transform.rotation.x);
+        let forward = rotation_matrix.transform_point3(glam::f32::vec3(0.0, 0.0, -1.0));
+
+        // Create view matrix using camera position and calculated forward direction
         let view = glam::f32::Mat4::look_at_rh(
             camera.transform.position,
-            camera.transform.position + glam::f32::vec3(0.0, 0.0, 1.0),
+            camera.transform.position + forward,
             glam::f32::vec3(0.0, 1.0, 0.0),
         );
 
@@ -312,7 +316,7 @@ impl Renderer {
 
         // Create camera uniforms struct
         let camera_uniforms = storage::uniform::Camera {
-            focal_view: glam::f32::vec3(0.0, 0.0, -1.0), // Simplified
+            focal_view: forward, // Use calculated forward direction
             world_space_position: camera.transform.position,
             view_matrix: view,
             projection_matrix: projection,

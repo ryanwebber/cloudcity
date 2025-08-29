@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use glam::f32;
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -9,10 +8,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use crate::{
-    renderer::Renderer,
-    types::{self, Camera, Clipping, Lens, Transform},
-};
+use crate::{controller::CameraController, renderer::Renderer, types};
 
 pub fn run() -> anyhow::Result<()> {
     let event_loop: EventLoop<()> = EventLoop::with_user_event().build()?;
@@ -51,26 +47,12 @@ impl ApplicationHandler<()> for App {
 
             let renderer = Renderer::try_new(window.clone()).expect("Failed to create renderer");
             let frame_timer = FrameTimer::new();
-            let camera = Camera {
-                lens: Lens::Perspective {
-                    fov: 50.0,
-                    focal_distance: 10.5,
-                },
-                transform: Transform {
-                    position: f32::Vec3::new(0.0, 0.0, 0.0),
-                    rotation: f32::Vec3::new(0.0, 0.0, 0.0),
-                    scale: f32::Vec3::new(1.0, 1.0, 1.0),
-                },
-                clipping: Clipping {
-                    near: 0.1,
-                    far: 2000.0,
-                },
-            };
+            let camera_controller = CameraController::new();
 
             State {
                 window,
                 renderer,
-                camera,
+                camera_controller,
                 frame_timer,
             }
         });
@@ -92,15 +74,25 @@ impl ApplicationHandler<()> for App {
             return;
         }
 
+        // Handle camera controller events first
+        state.camera_controller.handle_event(&event);
+
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
             WindowEvent::RedrawRequested => {
-                // First frame, just record the time and request another redraw
-                // rather than having a big emulation chunk up front
+                // Update camera controller with frame timing
                 if let Some(timings) = state.frame_timer.tick() {
-                    match state.renderer.render(&state.camera, &timings) {
+                    // Update camera controller
+                    state
+                        .camera_controller
+                        .update(timings.time_since_last_frame);
+
+                    // Get current camera from controller
+                    let camera = state.camera_controller.get_camera();
+
+                    match state.renderer.render(&camera, &timings) {
                         Ok(_) => {}
                         Err(e) => {
                             log::error!("Rendering error: {:?}", e);
@@ -122,7 +114,7 @@ impl ApplicationHandler<()> for App {
 pub struct State {
     window: Arc<Window>,
     renderer: Renderer,
-    camera: Camera,
+    camera_controller: CameraController,
     frame_timer: FrameTimer,
 }
 

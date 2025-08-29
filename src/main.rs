@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, arg, command};
 
 mod app;
+mod controller;
 mod gui;
 mod pipeline;
 mod renderer;
