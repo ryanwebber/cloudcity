@@ -3,7 +3,7 @@ use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
-    event::WindowEvent,
+    event::{DeviceEvent, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowId},
 };
@@ -75,7 +75,9 @@ impl ApplicationHandler<()> for App {
         }
 
         // Handle camera controller events first
-        state.camera_controller.handle_event(&event);
+        state
+            .camera_controller
+            .handle_window_event(&event, &state.window);
 
         match event {
             WindowEvent::CloseRequested => {
@@ -108,6 +110,20 @@ impl ApplicationHandler<()> for App {
             }
             _ => (),
         }
+    }
+
+    fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: DeviceEvent,
+    ) {
+        let Some(state) = &mut self.state else {
+            return;
+        };
+
+        // Handle raw mouse events for camera control when cursor is locked
+        state.camera_controller.handle_device_event(&event);
     }
 }
 
