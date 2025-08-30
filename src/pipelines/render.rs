@@ -45,24 +45,7 @@ impl RenderPipeline {
                 compilation_options: Default::default(),
                 buffers: &[
                     storage::buffer::Vertex::desc(),
-                    wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<storage::instance::Instance>()
-                            as wgpu::BufferAddress,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &[
-                            wgpu::VertexAttribute {
-                                offset: 0,
-                                shader_location: 2,
-                                format: wgpu::VertexFormat::Float32x3,
-                            },
-                            wgpu::VertexAttribute {
-                                offset: std::mem::size_of::<glam::f32::Vec3>()
-                                    as wgpu::BufferAddress,
-                                shader_location: 3,
-                                format: wgpu::VertexFormat::Uint32,
-                            },
-                        ],
-                    },
+                    storage::instance::Instance::desc(),
                 ],
             },
             fragment: Some(wgpu::FragmentState {

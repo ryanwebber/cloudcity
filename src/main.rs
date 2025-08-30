@@ -7,7 +7,6 @@ mod controller;
 mod gui;
 mod pipelines;
 mod renderer;
-mod spatial;
 mod storage;
 mod types;
 

@@ -41,6 +41,21 @@ pub mod instance {
     unsafe impl bytemuck::Pod for Instance {}
     unsafe impl bytemuck::Zeroable for Instance {}
 
+    impl Instance {
+        const ATTRIBS: [wgpu::VertexAttribute; 2] =
+            wgpu::vertex_attr_array![2 => Float32x3, 3 => Uint32];
+
+        pub fn desc() -> wgpu::VertexBufferLayout<'static> {
+            use std::mem;
+
+            wgpu::VertexBufferLayout {
+                array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
+                step_mode: wgpu::VertexStepMode::Instance,
+                attributes: &Self::ATTRIBS,
+            }
+        }
+    }
+
     #[repr(C)]
     #[derive(Copy, Clone, ShaderType)]
     pub struct Color {
@@ -71,6 +86,7 @@ pub mod uniform {
         pub projection_matrix: f32::Mat4,
         pub near_clip: f32,
         pub far_clip: f32,
+        pub fov: f32, // Add FOV for accurate frustum calculation
     }
 
     unsafe impl bytemuck::Pod for Camera {}
@@ -86,4 +102,15 @@ pub mod uniform {
 
     unsafe impl bytemuck::Pod for Globals {}
     unsafe impl bytemuck::Zeroable for Globals {}
+
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct CullingStats {
+        pub total_points: u32,
+        pub visible_points: u32,
+        pub culled_points: u32,
+    }
+
+    unsafe impl bytemuck::Pod for CullingStats {}
+    unsafe impl bytemuck::Zeroable for CullingStats {}
 }

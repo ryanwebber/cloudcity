@@ -21,6 +21,7 @@ struct CameraUniforms {
     projection_matrix: mat4x4<f32>,
     near_clip: f32,
     far_clip: f32,
+    fov: f32,
 }
 
 @group(0) @binding(0)

@@ -60,7 +60,7 @@ impl CameraController {
             fov: 50.0,
             focal_distance: 10.5,
             near: 0.1,
-            far: 2000.0,
+            far: 100.0,
         }
     }
 
