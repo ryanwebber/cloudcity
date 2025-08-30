@@ -271,7 +271,7 @@ impl Renderer {
         });
 
         let depth_texture_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let (debug_tx, debug_rx) = crossbeam::channel::bounded(100);
+        let (debug_tx, debug_rx) = crossbeam::channel::bounded(1);
 
         Ok(Self {
             surface,
@@ -630,7 +630,7 @@ impl Renderer {
                     if let Ok(..) = result {
                         let bytes = culling_stats_readback_buffer.slice(..).get_mapped_range();
                         let stats: &storage::uniform::CullingStats = bytemuck::from_bytes(&bytes);
-                        _ = stats_tx_clone.send(DebugEvent::CullingStats {
+                        _ = stats_tx_clone.try_send(DebugEvent::CullingStats {
                             total_points: stats.total_points as usize,
                             visible_points: stats.visible_points as usize,
                         });

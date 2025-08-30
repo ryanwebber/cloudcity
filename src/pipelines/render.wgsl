@@ -45,7 +45,7 @@ fn vs_main(
     let instance_color = instance_data.color;
 
     // Point size in world units
-    let point_size = 0.3;
+    let point_size = 0.1;
     
     // Transform instance position to view space
     let view_pos = camera.view_matrix * vec4<f32>(instance_position, 1.0);
