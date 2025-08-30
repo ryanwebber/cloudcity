@@ -95,7 +95,18 @@ impl ApplicationHandler<()> for App {
                     let camera = state.camera_controller.get_camera();
 
                     match state.renderer.render(&camera, &timings) {
-                        Ok(_) => {}
+                        Ok(_) => {
+                            // Update window title with culling statistics
+                            let (visible, total, culled_pct) = state.renderer.get_culling_stats();
+                            let title = format!(
+                                "{} - Points: {}/{} ({:.1}% culled)",
+                                env!("CARGO_PKG_NAME"),
+                                visible,
+                                total,
+                                culled_pct
+                            );
+                            state.window.set_title(&title);
+                        }
                         Err(e) => {
                             log::error!("Rendering error: {:?}", e);
                             event_loop.exit();

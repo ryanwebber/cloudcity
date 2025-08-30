@@ -4,7 +4,7 @@ use pollster::FutureExt;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::{pipeline::PointCloudPipeline, storage, types};
+use crate::{pipeline::PointCloudPipeline, spatial, storage, types};
 
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
@@ -13,12 +13,14 @@ pub struct Renderer {
     queue: wgpu::Queue,
     hexagon: Hexagon,
     point_cloud_pipeline: PointCloudPipeline,
-    instance_buffer: wgpu::Buffer,
-    instance_count: u32,
     camera_uniforms: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     depth_texture: wgpu::Texture,
     depth_texture_view: wgpu::TextureView,
+    spatial_index: spatial::SpatialIndex,
+    all_instances: Vec<storage::instance::Instance>,
+    visible_instance_buffer: wgpu::Buffer,
+    visible_instance_count: u32,
 }
 
 impl Renderer {
@@ -77,10 +79,17 @@ impl Renderer {
 
         // Create instance data with random points
         let instances = Self::create_random_instances(5000); // Increased from 1000 to 5000
-        let instance_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Instance Buffer"),
-            contents: bytemuck::cast_slice(&instances),
-            usage: wgpu::BufferUsages::VERTEX,
+
+        // Create spatial index for frustum culling
+        let point_positions: Vec<glam::f32::Vec3> = instances.iter().map(|i| i.position).collect();
+        let spatial_index = spatial::SpatialIndex::new(point_positions);
+
+        // Create buffer for visible instances
+        let visible_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Visible Instance Buffer"),
+            size: (std::mem::size_of::<storage::instance::Instance>() * instances.len()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         // Create camera uniforms buffer
@@ -128,12 +137,14 @@ impl Renderer {
             queue,
             hexagon,
             point_cloud_pipeline,
-            instance_buffer,
-            instance_count: instances.len() as u32,
             camera_uniforms,
             camera_bind_group,
             depth_texture,
             depth_texture_view,
+            spatial_index,
+            all_instances: instances,
+            visible_instance_buffer,
+            visible_instance_count: 0,
         })
     }
 
@@ -216,6 +227,9 @@ impl Renderer {
         // Update camera uniforms
         self.update_camera_uniforms(camera);
 
+        // Perform frustum culling to get visible instances
+        self.update_visible_instances(camera);
+
         let output = self.surface.get_current_texture()?;
         let view = output
             .texture
@@ -265,14 +279,14 @@ impl Renderer {
 
             // Set vertex and index buffers
             render_pass.set_vertex_buffer(0, self.hexagon.vertex_buffer.slice(..));
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
+            render_pass.set_vertex_buffer(1, self.visible_instance_buffer.slice(..));
             render_pass.set_index_buffer(
                 self.hexagon.index_buffer.slice(..),
                 wgpu::IndexFormat::Uint32,
             );
 
             // Draw instances
-            render_pass.draw_indexed(0..12, 0, 0..self.instance_count);
+            render_pass.draw_indexed(0..12, 0, 0..self.visible_instance_count);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -332,6 +346,77 @@ impl Renderer {
             0,
             bytemuck::cast_slice(&[camera_uniforms]),
         );
+    }
+
+    fn update_visible_instances(&mut self, camera: &types::Camera) {
+        // Calculate view-projection matrix for frustum culling
+        let aspect_ratio = self.surface_config.width as f32 / self.surface_config.height as f32;
+        let fov = match camera.lens {
+            types::Lens::Perspective { fov, .. } => fov.to_radians(),
+        };
+
+        let projection = glam::f32::Mat4::perspective_rh(
+            fov,
+            aspect_ratio,
+            camera.clipping.near,
+            camera.clipping.far,
+        );
+
+        let rotation_matrix = glam::f32::Mat4::from_rotation_y(camera.transform.rotation.y)
+            * glam::f32::Mat4::from_rotation_x(camera.transform.rotation.x);
+        let forward = rotation_matrix.transform_point3(glam::f32::vec3(0.0, 0.0, -1.0));
+
+        let view = glam::f32::Mat4::look_at_rh(
+            camera.transform.position,
+            camera.transform.position + forward,
+            glam::f32::vec3(0.0, 1.0, 0.0),
+        );
+
+        let view_projection = projection * view;
+
+        // Get visible point indices using frustum culling
+        let visible_indices = self.spatial_index.get_visible_points(view_projection);
+
+        // Create visible instances buffer
+        let mut visible_instances = Vec::with_capacity(visible_indices.len());
+        for &index in &visible_indices {
+            visible_instances.push(self.all_instances[index]);
+        }
+
+        // Update the visible instance buffer
+        if !visible_instances.is_empty() {
+            self.queue.write_buffer(
+                &self.visible_instance_buffer,
+                0,
+                bytemuck::cast_slice(&visible_instances),
+            );
+            self.visible_instance_count = visible_instances.len() as u32;
+        } else {
+            self.visible_instance_count = 0;
+        }
+
+        // Log culling statistics occasionally
+        if self.visible_instance_count % 1000 == 0 {
+            log::info!(
+                "Frustum culling: {}/{} points visible ({:.1}% culled)",
+                self.visible_instance_count,
+                self.all_instances.len(),
+                (1.0 - self.visible_instance_count as f32 / self.all_instances.len() as f32)
+                    * 100.0
+            );
+        }
+    }
+
+    /// Get current culling statistics
+    pub fn get_culling_stats(&self) -> (u32, usize, f32) {
+        let total = self.all_instances.len();
+        let visible = self.visible_instance_count as usize;
+        let culled_percentage = if total > 0 {
+            (1.0 - visible as f32 / total as f32) * 100.0
+        } else {
+            0.0
+        };
+        (self.visible_instance_count, total, culled_percentage)
     }
 }
 
