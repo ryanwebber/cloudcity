@@ -4,7 +4,7 @@ use pollster::FutureExt;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::{pipeline::PointCloudPipeline, spatial, storage, types};
+use crate::{pipelines, spatial, storage, types};
 
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
@@ -12,7 +12,7 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     hexagon: Hexagon,
-    point_cloud_pipeline: PointCloudPipeline,
+    render_pipeline: pipelines::RenderPipeline,
     camera_uniforms: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
     depth_texture: wgpu::Texture,
@@ -75,7 +75,7 @@ impl Renderer {
         };
 
         let hexagon = Hexagon::create(&device);
-        let point_cloud_pipeline = PointCloudPipeline::new(&device, surface_format);
+        let render_pipeline = pipelines::RenderPipeline::new(&device, surface_format);
 
         // Create instance data with random points
         let instances = Self::create_random_instances(5000); // Increased from 1000 to 5000
@@ -103,7 +103,7 @@ impl Renderer {
         // Create bind group for camera uniforms
         let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Camera Bind Group"),
-            layout: &point_cloud_pipeline.bind_group_layout,
+            layout: &render_pipeline.bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: camera_uniforms.as_entire_binding(),
@@ -136,7 +136,7 @@ impl Renderer {
             device,
             queue,
             hexagon,
-            point_cloud_pipeline,
+            render_pipeline,
             camera_uniforms,
             camera_bind_group,
             depth_texture,
@@ -274,7 +274,7 @@ impl Renderer {
             });
 
             // Set the pipeline and bind group
-            render_pass.set_pipeline(&self.point_cloud_pipeline.pipeline);
+            render_pass.set_pipeline(&self.render_pipeline.pipeline);
             render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
 
             // Set vertex and index buffers

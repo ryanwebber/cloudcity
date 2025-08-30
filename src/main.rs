@@ -5,7 +5,7 @@ use clap::{Parser, Subcommand, arg, command};
 mod app;
 mod controller;
 mod gui;
-mod pipeline;
+mod pipelines;
 mod renderer;
 mod spatial;
 mod storage;

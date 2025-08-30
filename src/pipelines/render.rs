@@ -1,15 +1,15 @@
 use crate::storage;
 use wgpu;
 
-pub struct PointCloudPipeline {
+pub struct RenderPipeline {
     pub pipeline: wgpu::RenderPipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
 }
 
-impl PointCloudPipeline {
+impl RenderPipeline {
     pub fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Point Cloud Bind Group Layout"),
+            label: Some("Render Bind Group Layout"),
             entries: &[
                 // Uniforms buffer
                 wgpu::BindGroupLayoutEntry {
@@ -26,21 +26,21 @@ impl PointCloudPipeline {
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Point Cloud Pipeline Layout"),
+            label: Some("Render Pipeline Layout"),
             bind_group_layouts: &[&bind_group_layout],
             push_constant_ranges: &[],
         });
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Point Cloud Shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("default.wgsl").into()),
-        });
+        let module = {
+            let descriptor = wgpu::include_wgsl!("render.wgsl");
+            device.create_shader_module(descriptor)
+        };
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Point Cloud Pipeline"),
+            label: Some("Render Pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &module,
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
                 buffers: &[
@@ -66,7 +66,7 @@ impl PointCloudPipeline {
                 ],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &module,
                 entry_point: Some("fs_main"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
