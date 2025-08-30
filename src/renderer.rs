@@ -1,10 +1,16 @@
-use std::sync::{Arc, Mutex};
-
+use crossbeam::channel::{Receiver, Sender};
+use glam::Vec4;
 use pollster::FutureExt;
+use std::sync::Arc;
+use wgpu;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::{pipelines, storage, types};
+use crate::{
+    pipelines,
+    storage::{self},
+    types,
+};
 
 pub struct Renderer {
     surface: wgpu::Surface<'static>,
@@ -12,22 +18,26 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     hexagon: Hexagon,
-    render_pipeline: pipelines::RenderPipeline,
-    culling_pipeline: pipelines::CullingPipeline,
-    camera_uniforms: wgpu::Buffer,
-    camera_bind_group: wgpu::BindGroup,
-    culling_bind_group: wgpu::BindGroup,
+    instance_count: usize,
+    // Textures
     depth_texture: wgpu::Texture,
     depth_texture_view: wgpu::TextureView,
-    // GPU culling buffers
+    // Bind groups
+    culling_bind_group: wgpu::BindGroup,
+    render_bind_group: wgpu::BindGroup,
+    // Pipelines
+    render_pipeline: pipelines::RenderPipeline,
+    culling_pipeline: pipelines::CullingPipeline,
+    // Buffers
+    camera_uniforms: wgpu::Buffer,
     point_positions_buffer: wgpu::Buffer,
     visibility_buffer: wgpu::Buffer,
     indirect_draw_args_buffer: wgpu::Buffer,
-    culling_stats_buffer: wgpu::Buffer,
     compacted_indices_buffer: wgpu::Buffer,
-    // Instance buffer for rendering (contains all instances, GPU culling determines visibility)
-    instance_buffer: wgpu::Buffer,
-    instance_count: usize,
+    culling_stats_buffer: wgpu::Buffer,
+    // Buffered readbacks
+    debug_rx: Receiver<DebugEvent>,
+    debug_tx: Sender<DebugEvent>,
 }
 
 impl Renderer {
@@ -70,7 +80,7 @@ impl Renderer {
             .find(|f| f.is_srgb())
             .unwrap_or(surface_caps.formats[0]);
 
-        let config = wgpu::SurfaceConfiguration {
+        let surface_config = wgpu::SurfaceConfiguration {
             desired_maximum_frame_latency: 2,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
@@ -87,14 +97,9 @@ impl Renderer {
 
         // Create instance data with random points
         let instances = Self::create_random_instances(5000); // Increased from 1000 to 5000
+        let instance_count = instances.len();
 
-        // Create visible instance buffer (will be populated by CPU culling)
-        let _visible_instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Visible Instance Buffer"),
-            size: (std::mem::size_of::<storage::instance::Instance>() * instances.len()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        log::debug!("Initial instance count: {}", instance_count);
 
         // Create camera uniforms buffer
         let camera_uniforms = device.create_buffer(&wgpu::BufferDescriptor {
@@ -104,27 +109,17 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
-        // Create bind group for camera uniforms
-        let camera_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Camera Bind Group"),
-            layout: &render_pipeline.bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_uniforms.as_entire_binding(),
-            }],
-        });
-
         // Create GPU culling buffers
         let point_positions_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Point Positions Buffer"),
-            size: (std::mem::size_of::<glam::f32::Vec3>() * instances.len()) as u64,
+            size: (std::mem::size_of::<glam::f32::Vec4>() * instance_count) as u64, // Vec4 for alignment
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let visibility_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Visibility Buffer"),
-            size: (std::mem::size_of::<u32>() * instances.len()) as u64,
+            size: (std::mem::size_of::<u32>() * instance_count) as u64,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
@@ -133,7 +128,7 @@ impl Renderer {
 
         let indirect_draw_args_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Indirect Draw Args Buffer"),
-            size: 20u64, // 5 u32 values for indirect draw
+            size: 32, // 5 u32 values for indirect draw, aligned to 4 bytes
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::INDIRECT
                 | wgpu::BufferUsages::COPY_DST
@@ -152,7 +147,7 @@ impl Renderer {
 
         let compacted_indices_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Compacted Indices Buffer"),
-            size: (std::mem::size_of::<u32>() * instances.len()) as u64,
+            size: (std::mem::size_of::<u32>() * instance_count) as u64,
             usage: wgpu::BufferUsages::STORAGE
                 | wgpu::BufferUsages::COPY_DST
                 | wgpu::BufferUsages::COPY_SRC,
@@ -162,48 +157,20 @@ impl Renderer {
         // Create instance buffer for rendering (contains all instances)
         let instance_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Instance Buffer"),
-            size: (std::mem::size_of::<storage::instance::Instance>() * instances.len()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            size: (std::mem::size_of::<storage::instance::Instance>() * instance_count) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         // Populate the instance buffer with all instances
         queue.write_buffer(&instance_buffer, 0, bytemuck::cast_slice(&instances));
 
-        // Create bind group for culling
-        let culling_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Culling Bind Group"),
-            layout: &culling_pipeline.bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: point_positions_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: camera_uniforms.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: visibility_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: indirect_draw_args_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: culling_stats_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: compacted_indices_buffer.as_entire_binding(),
-                },
-            ],
-        });
-
         // Populate the point positions buffer
-        let point_positions: Vec<glam::f32::Vec3> = instances.iter().map(|i| i.position).collect();
+        let point_positions: Vec<glam::f32::Vec4> = instances
+            .iter()
+            .map(|i| Vec4::new(i.position.x, i.position.y, i.position.z, 0.0))
+            .collect();
+
         queue.write_buffer(
             &point_positions_buffer,
             0,
@@ -219,7 +186,7 @@ impl Renderer {
         );
 
         // Initialize culling stats buffer
-        let initial_stats = [instances.len() as u32, 0u32, 0u32]; // total, visible, culled
+        let initial_stats = [instance_count as u32, 0u32, 0u32]; // total, visible, culled
         queue.write_buffer(
             &culling_stats_buffer,
             0,
@@ -227,21 +194,72 @@ impl Renderer {
         );
 
         // Initialize compacted indices buffer
-        let initial_compacted_indices = vec![0u32; instances.len()];
         queue.write_buffer(
             &compacted_indices_buffer,
             0,
-            bytemuck::cast_slice(&initial_compacted_indices),
+            bytemuck::cast_slice(&vec![0u32; instance_count]),
         );
 
-        surface.configure(&device, &config);
+        // Create bind group for rendering
+        let render_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Render Bind Group"),
+            layout: &render_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera_uniforms.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: instance_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: compacted_indices_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        // Create bind group for culling
+        let culling_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Culling Bind Group"),
+            layout: &culling_pipeline.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: camera_uniforms.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: point_positions_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: visibility_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: indirect_draw_args_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: compacted_indices_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: culling_stats_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        surface.configure(&device, &surface_config);
 
         // Create depth texture
         let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Depth Texture"),
             size: wgpu::Extent3d {
-                width: config.width,
-                height: config.height,
+                width: surface_config.width,
+                height: surface_config.height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -253,29 +271,29 @@ impl Renderer {
         });
 
         let depth_texture_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let (debug_tx, debug_rx) = crossbeam::channel::bounded(100);
 
         Ok(Self {
             surface,
-            surface_config: config,
+            surface_config,
             device,
             queue,
             hexagon,
+            instance_count,
+            depth_texture,
+            depth_texture_view,
+            culling_bind_group,
+            render_bind_group,
             render_pipeline,
             culling_pipeline,
             camera_uniforms,
-            camera_bind_group,
-            culling_bind_group,
-            depth_texture,
-            depth_texture_view,
-            // GPU culling buffers
             point_positions_buffer,
             visibility_buffer,
             indirect_draw_args_buffer,
-            culling_stats_buffer,
             compacted_indices_buffer,
-            // Instance buffer for rendering (contains all instances, GPU culling determines visibility)
-            instance_buffer,
-            instance_count: instances.len(),
+            culling_stats_buffer,
+            debug_rx,
+            debug_tx,
         })
     }
 
@@ -355,11 +373,11 @@ impl Renderer {
         camera: &types::Camera,
         _timings: &types::Timings,
     ) -> anyhow::Result<()> {
-        // Update camera uniforms FIRST
+        // Update camera uniforms for GPU culling
         self.update_camera_uniforms(camera);
 
         // Perform frustum culling to get visible instances
-        self.update_visible_instances(camera);
+        self.update_visible_instances();
 
         let output = self.surface.get_current_texture()?;
         let view = output
@@ -383,9 +401,9 @@ impl Renderer {
                         resolve_target: None,
                         ops: wgpu::Operations {
                             load: wgpu::LoadOp::Clear(wgpu::Color {
-                                r: 0.1,
-                                g: 0.1,
-                                b: 0.1,
+                                r: 0.01,
+                                g: 0.02,
+                                b: 0.03,
                                 a: 1.0,
                             }),
                             store: wgpu::StoreOp::Store,
@@ -406,29 +424,29 @@ impl Renderer {
 
             // Set the pipeline and bind group
             render_pass.set_pipeline(&self.render_pipeline.pipeline);
-            render_pass.set_bind_group(0, &self.camera_bind_group, &[]);
+            render_pass.set_bind_group(0, &self.render_bind_group, &[]);
 
             // Set vertex and index buffers
             render_pass.set_vertex_buffer(0, self.hexagon.vertex_buffer.slice(..));
-            render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
             render_pass.set_index_buffer(
                 self.hexagon.index_buffer.slice(..),
                 wgpu::IndexFormat::Uint32,
             );
 
-            // Draw instances using GPU culling results
-            // IMPORTANT: We need to render the actual visible points, not just the first N
-            // Use the compacted indices to render only visible instances
-            let visible_count = self.get_visible_count();
-            if visible_count > 0 {
-                render_pass.draw_indexed(0..12, 0, 0..visible_count as u32);
-            }
+            // Draw using indirect rendering with GPU-computed draw args
+            // The compute shader has already updated indirect_draw_args with the correct visible count
+            // and the vertex shader will use compacted_indices[gl_InstanceIndex] to get the right instance
+            render_pass.draw_indexed_indirect(&self.indirect_draw_args_buffer, 0);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
         Ok(())
+    }
+
+    pub fn create_debug_receiver(&self) -> Receiver<DebugEvent> {
+        self.debug_rx.clone()
     }
 
     fn update_camera_uniforms(&mut self, camera: &types::Camera) {
@@ -452,7 +470,7 @@ impl Renderer {
             * glam::f32::Mat4::from_rotation_x(camera.transform.rotation.x)
             * glam::f32::Mat4::from_rotation_z(camera.transform.rotation.z);
 
-        // FIXED: Use transform_vector3 for direction vectors, not transform_point3
+        // Use transform_vector3 for direction vectors, not transform_point3
         let forward = rotation_matrix.transform_vector3(glam::f32::vec3(0.0, 0.0, -1.0));
 
         // Create view matrix using camera position and calculated forward direction
@@ -460,30 +478,6 @@ impl Renderer {
             camera.transform.position,
             camera.transform.position + forward,
             glam::f32::vec3(0.0, 1.0, 0.0),
-        );
-
-        // DEBUG: Log matrix values to see what's being generated
-        log::info!("Camera Debug Info:");
-        log::info!("  Position: {:?}", camera.transform.position);
-        log::info!("  Rotation: {:?}", camera.transform.rotation);
-        log::info!("  Forward: {:?}", forward);
-        log::info!("  View Matrix: {:?}", view);
-        log::info!("  Projection Matrix: {:?}", projection);
-
-        // Test the view-projection matrix
-        let view_proj = view * projection;
-        log::info!("  View*Projection Matrix: {:?}", view_proj);
-
-        // DEBUG: Test a simple point transformation to see what's happening
-        let test_point = glam::f32::vec3(0.0, 0.0, 0.0); // Origin point
-        let test_point_view = (view * test_point.extend(1.0)).truncate();
-        log::info!("  Test Point (0,0,0) in View Space: {:?}", test_point_view);
-
-        let test_point2 = glam::f32::vec3(0.0, 0.0, 10.0); // Point 10 units ahead
-        let test_point2_view = (view * test_point2.extend(1.0)).truncate();
-        log::info!(
-            "  Test Point (0,0,10) in View Space: {:?}",
-            test_point2_view
         );
 
         // Create camera uniforms struct
@@ -504,7 +498,7 @@ impl Renderer {
             bytemuck::cast_slice(&[camera_uniforms]),
         );
 
-        // CRITICAL FIX: Recreate the culling bind group with updated camera uniforms
+        // Recreate the culling bind group with updated camera uniforms
         // The old bind group was pointing to stale camera data
         self.culling_bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Culling Bind Group"),
@@ -512,11 +506,11 @@ impl Renderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.point_positions_buffer.as_entire_binding(),
+                    resource: self.camera_uniforms.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: self.camera_uniforms.as_entire_binding(),
+                    resource: self.point_positions_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -528,47 +522,23 @@ impl Renderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: self.culling_stats_buffer.as_entire_binding(),
+                    resource: self.compacted_indices_buffer.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: self.compacted_indices_buffer.as_entire_binding(),
+                    resource: self.culling_stats_buffer.as_entire_binding(),
                 },
             ],
         });
-
-        // CRITICAL: Ensure the camera uniforms buffer is fully written before compute shader runs
-        // Submit a dummy command to force GPU synchronization
-        self.queue.submit(std::iter::once(
-            self.device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Camera Uniform Sync"),
-                })
-                .finish(),
-        ));
     }
 
-    fn update_visible_instances(&mut self, camera: &types::Camera) {
-        // Debug: log camera position to see if this is being called
-        log::info!(
-            "GPU culling called with camera position: {:?}",
-            camera.transform.position
-        );
-
+    fn update_visible_instances(&mut self) {
         // Reset culling stats buffer
         let reset_stats = [self.instance_count as u32, 0u32, 0u32];
         self.queue.write_buffer(
             &self.culling_stats_buffer,
             0,
             bytemuck::cast_slice(&reset_stats),
-        );
-
-        // Reset visibility buffer
-        let visibility_reset = vec![0u32; self.instance_count];
-        self.queue.write_buffer(
-            &self.visibility_buffer,
-            0,
-            bytemuck::cast_slice(&visibility_reset),
         );
 
         // Create command encoder for compute operations
@@ -587,16 +557,11 @@ impl Renderer {
                 });
 
             // Bind the culling pipeline and bind group
-            compute_pass.set_pipeline(&self.culling_pipeline.pipeline);
+            compute_pass.set_pipeline(&self.culling_pipeline.cull_pipeline);
             compute_pass.set_bind_group(0, &self.culling_bind_group, &[]);
 
             // Dispatch culling compute shader
             let workgroup_count = (self.instance_count + 63) / 64; // 64 threads per workgroup
-            log::info!(
-                "Dispatching culling compute shader with {} workgroups for {} instances",
-                workgroup_count,
-                self.instance_count
-            );
             compute_pass.dispatch_workgroups(workgroup_count as u32, 1, 1);
         }
 
@@ -623,94 +588,56 @@ impl Renderer {
 
             // Dispatch compaction compute shader
             let workgroup_count = (self.instance_count + 63) / 64; // 64 threads per workgroup
-            log::info!(
-                "Dispatching compaction compute shader with {} workgroups for {} instances",
-                workgroup_count,
-                self.instance_count
-            );
             compute_pass.dispatch_workgroups(workgroup_count as u32, 1, 1);
         }
 
         // Submit compaction commands
         self.queue.submit(std::iter::once(compact_encoder.finish()));
 
-        // Debug: log that GPU culling completed
-        log::info!(
-            "GPU culling and compaction completed for {} instances",
-            self.instance_count
-        );
-
-        // TEMPORARY DEBUGGING: Read back indirect draw args to see what GPU culling set
-        let draw_args_size = std::mem::size_of::<[u32; 5]>();
-        let draw_args_staging = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Draw Args Staging"),
-            size: draw_args_size as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-
-        // Copy indirect draw args from GPU to staging buffer
-        let mut draw_args_copy_encoder =
-            self.device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Draw Args Copy Encoder"),
+        {
+            // Processing culling stats readback
+            let culling_stats_readback_buffer =
+                self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Culling Stats Readback Buffer"),
+                    size: std::mem::size_of::<storage::uniform::CullingStats>() as u64,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
                 });
 
-        draw_args_copy_encoder.copy_buffer_to_buffer(
-            &self.indirect_draw_args_buffer,
-            0,
-            &draw_args_staging,
-            0,
-            draw_args_size as u64,
-        );
+            let mut readback_encoder =
+                self.device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("Readback Encoder"),
+                    });
 
-        self.queue
-            .submit(std::iter::once(draw_args_copy_encoder.finish()));
+            // Copy the culling stats buffer to the host
+            readback_encoder.copy_buffer_to_buffer(
+                &self.culling_stats_buffer,
+                0,
+                &culling_stats_readback_buffer,
+                0,
+                std::mem::size_of::<storage::uniform::CullingStats>() as u64,
+            );
 
-        // Map and read the draw args
-        draw_args_staging
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, |_| {});
+            self.queue
+                .submit(std::iter::once(readback_encoder.finish()));
 
-        log::info!("Indirect draw args buffer copied to staging for debugging");
-
-        // TODO: In a full implementation, we'd read the indirect draw args to verify they were updated
-        // For now, we'll assume the GPU culling worked and proceed with rendering
-    }
-
-    /// Get current culling statistics
-    pub fn get_culling_stats(&self) -> (u32, usize, f32) {
-        // TODO: Implement actual culling stats once we figure out how to read them from the GPU
-        (self.instance_count as u32, self.instance_count, 0.0)
-    }
-
-    fn get_visible_count(&self) -> u32 {
-        let mut staging_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Visible Count Staging"),
-            size: std::mem::size_of::<u32>() as u64,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-
-        let mut copy_encoder =
-            self.device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Visible Count Copy Encoder"),
-                });
-
-        copy_encoder.copy_buffer_to_buffer(
-            &self.compacted_indices_buffer,
-            0,
-            &staging_buffer,
-            0,
-            std::mem::size_of::<u32>() as u64,
-        );
-
-        self.queue.submit(std::iter::once(copy_encoder.finish()));
-
-        // For now, return a simple value to avoid complex async buffer reading
-        // TODO: Implement proper buffer reading for visible count
-        self.instance_count as u32
+            let stats_tx_clone = self.debug_tx.clone();
+            let culling_stats_readback_buffer = Arc::new(culling_stats_readback_buffer);
+            culling_stats_readback_buffer.clone().slice(..).map_async(
+                wgpu::MapMode::Read,
+                move |result| {
+                    if let Ok(..) = result {
+                        let bytes = culling_stats_readback_buffer.slice(..).get_mapped_range();
+                        let stats: &storage::uniform::CullingStats = bytemuck::from_bytes(&bytes);
+                        _ = stats_tx_clone.send(DebugEvent::CullingStats {
+                            total_points: stats.total_points as usize,
+                            visible_points: stats.visible_points as usize,
+                        });
+                    }
+                },
+            );
+        }
     }
 }
 
@@ -780,4 +707,12 @@ impl Hexagon {
             },
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum DebugEvent {
+    CullingStats {
+        total_points: usize,
+        visible_points: usize,
+    },
 }

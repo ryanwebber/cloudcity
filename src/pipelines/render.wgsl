@@ -27,16 +27,28 @@ struct CameraUniforms {
 @group(0) @binding(0)
 var<uniform> camera: CameraUniforms;
 
+@group(0) @binding(1)
+var<storage, read> instances: array<InstanceInput>;
+
+@group(0) @binding(2)
+var<storage, read> compacted_indices: array<u32>;
+
 @vertex
 fn vs_main(
     model: VertexInput,
-    instance: InstanceInput,
+    @builtin(instance_index) instance_index: u32,
 ) -> VertexOutput {
+    // Access the instance data using the actual index
+    let compact_index = compacted_indices[instance_index];
+    let instance_data = instances[compact_index];
+    var instance_position = instance_data.position;
+    let instance_color = instance_data.color;
+
     // Point size in world units
     let point_size = 0.3;
     
     // Transform instance position to view space
-    let view_pos = camera.view_matrix * vec4<f32>(instance.position, 1.0);
+    let view_pos = camera.view_matrix * vec4<f32>(instance_position, 1.0);
     
     // Create billboard by offsetting the quad vertices in view space
     // This ensures the quad always faces the camera
@@ -53,14 +65,13 @@ fn vs_main(
     let clip_pos = camera.projection_matrix * vec4<f32>(final_view_pos, 1.0);
     
     // Convert color from packed u32 to vec4
-    let r = f32(instance.color & 0x000000FFu) / 255.0;
-    let g = f32((instance.color & 0x0000FF00u) >> 8u) / 255.0;
-    let b = f32((instance.color & 0x00FF0000u) >> 16u) / 255.0;
-    let a = f32((instance.color & 0xFF000000u) >> 24u) / 255.0;
+    let r = f32(instance_color & 0x000000FFu) / 255.0;
+    let g = f32((instance_color & 0x0000FF00u) >> 8u) / 255.0;
+    let b = f32((instance_color & 0x00FF0000u) >> 16u) / 255.0;
     
     return VertexOutput(
         clip_pos,
-        vec4<f32>(r, g, b, a),
+        vec4<f32>(r, g, b, 1.0),
         model.position
     );
 }

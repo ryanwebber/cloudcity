@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crossbeam::channel::Receiver;
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -8,7 +9,11 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use crate::{controller::CameraController, renderer::Renderer, types};
+use crate::{
+    controller::CameraController,
+    renderer::{DebugEvent, Renderer},
+    types,
+};
 
 pub fn run() -> anyhow::Result<()> {
     let event_loop: EventLoop<()> = EventLoop::with_user_event().build()?;
@@ -46,12 +51,14 @@ impl ApplicationHandler<()> for App {
             );
 
             let renderer = Renderer::try_new(window.clone()).expect("Failed to create renderer");
+            let debug_receiver = renderer.create_debug_receiver();
             let frame_timer = FrameTimer::new();
             let camera_controller = CameraController::new();
 
             State {
                 window,
                 renderer,
+                debug_receiver,
                 camera_controller,
                 frame_timer,
             }
@@ -95,21 +102,29 @@ impl ApplicationHandler<()> for App {
                     let camera = state.camera_controller.get_camera();
 
                     match state.renderer.render(&camera, &timings) {
-                        Ok(_) => {
-                            // Update window title with culling statistics
-                            let (visible, total, culled_pct) = state.renderer.get_culling_stats();
-                            let title = format!(
-                                "{} - Points: {}/{} ({:.1}% culled)",
-                                env!("CARGO_PKG_NAME"),
-                                visible,
-                                total,
-                                culled_pct
-                            );
-                            state.window.set_title(&title);
-                        }
+                        Ok(_) => {}
                         Err(e) => {
                             log::error!("Rendering error: {:?}", e);
                             event_loop.exit();
+                        }
+                    }
+
+                    while let Ok(debug_event) = state.debug_receiver.try_recv() {
+                        match debug_event {
+                            DebugEvent::CullingStats {
+                                total_points,
+                                visible_points,
+                            } => {
+                                let title = format!(
+                                    "{} - Points: {}/{} ({:.1}% culled)",
+                                    env!("CARGO_PKG_NAME"),
+                                    visible_points,
+                                    total_points,
+                                    (total_points - visible_points) as f32 / total_points as f32
+                                        * 100.0
+                                );
+                                state.window.set_title(&title);
+                            }
                         }
                     }
                 }
@@ -141,6 +156,7 @@ impl ApplicationHandler<()> for App {
 pub struct State {
     window: Arc<Window>,
     renderer: Renderer,
+    debug_receiver: Receiver<DebugEvent>,
     camera_controller: CameraController,
     frame_timer: FrameTimer,
 }

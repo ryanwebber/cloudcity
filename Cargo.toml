@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0.99"
 bytemuck = { version = "1.23.2", features = ["derive"] }
 clap = { version = "4.5.46", features = ["derive"] }
+crossbeam = "0.8.4"
 egui-wgpu = { version = "0.32.1", features = ["winit"] }
 encase = { version = "0.11.2", features = ["glam"] }
 env_logger = "0.11.8"

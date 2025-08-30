@@ -11,12 +11,34 @@ impl RenderPipeline {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Render Bind Group Layout"),
             entries: &[
-                // Uniforms buffer
+                // Camera uniforms buffer
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::VERTEX,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Instances buffer (as storage buffer)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Compacted indices buffer (as storage buffer)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -43,10 +65,7 @@ impl RenderPipeline {
                 module: &module,
                 entry_point: Some("vs_main"),
                 compilation_options: Default::default(),
-                buffers: &[
-                    storage::buffer::Vertex::desc(),
-                    storage::instance::Instance::desc(),
-                ],
+                buffers: &[storage::buffer::Vertex::desc()],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &module,

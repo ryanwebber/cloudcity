@@ -1,4 +1,4 @@
-use glam::{Mat3, f32};
+use glam::f32;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Camera {

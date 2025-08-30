@@ -1,7 +1,7 @@
 use wgpu::{self};
 
 pub struct CullingPipeline {
-    pub pipeline: wgpu::ComputePipeline,
+    pub cull_pipeline: wgpu::ComputePipeline,
     pub bind_group_layout: wgpu::BindGroupLayout,
     pub compact_pipeline: wgpu::ComputePipeline,
 }
@@ -12,23 +12,23 @@ impl CullingPipeline {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Culling Bind Group Layout"),
             entries: &[
-                // Point positions buffer
+                // Camera uniforms
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
                 },
-                // Camera uniforms
+                // Point positions buffer
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -56,7 +56,7 @@ impl CullingPipeline {
                     },
                     count: None,
                 },
-                // Culling statistics
+                // Compacted indices buffer
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -67,7 +67,7 @@ impl CullingPipeline {
                     },
                     count: None,
                 },
-                // Compacted indices buffer
+                // Culling statistics
                 wgpu::BindGroupLayoutEntry {
                     binding: 5,
                     visibility: wgpu::ShaderStages::COMPUTE,
@@ -95,7 +95,7 @@ impl CullingPipeline {
         };
 
         // Create compute pipeline for culling
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let cull_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("Culling Pipeline"),
             layout: Some(&pipeline_layout),
             module: &module,
@@ -115,7 +115,7 @@ impl CullingPipeline {
         });
 
         Self {
-            pipeline,
+            cull_pipeline,
             bind_group_layout,
             compact_pipeline,
         }
