@@ -7,50 +7,59 @@ use crate::{layer::Layer, types};
 
 pub struct Renderer {
     graphics: Graphics,
-    layers: Vec<Box<dyn Layer>>,
 }
 
 impl Renderer {
     pub fn try_new(window: Arc<Window>) -> anyhow::Result<Self> {
         let graphics = Graphics::try_new(window.clone())?;
-        Ok(Self {
-            graphics,
-            layers: vec![],
-        })
+        Ok(Self { graphics })
     }
 
     pub fn resize_surface(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         self.graphics.resize_surface(new_size);
-        for layer in self.layers.iter_mut() {
-            layer.resize(new_size);
-        }
     }
 
-    pub fn render(
-        &mut self,
-        camera: &types::Camera,
-        timings: &types::Timings,
+    pub fn render_with<'a>(
+        &'a mut self,
+        camera: &'a types::Camera,
+        timings: &'a types::Timings,
+        mut render_fn: impl FnMut(RenderContext<'a>) -> anyhow::Result<()>,
     ) -> anyhow::Result<()> {
         let surface = self.graphics.surface.get_current_texture()?;
         let view = surface
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        for layer in self.layers.iter() {
-            layer.render(camera, timings, &self.graphics, &view)?;
-        }
+        let render_context = RenderContext {
+            graphics: &mut self.graphics,
+            view: view,
+            camera,
+            timings,
+        };
+
+        let result = render_fn(render_context);
 
         surface.present();
 
-        Ok(())
+        result
     }
 
     pub fn graphics(&self) -> &Graphics {
         &self.graphics
     }
+}
 
-    pub fn add_layer(&mut self, layer: Box<dyn Layer>) {
-        self.layers.push(layer);
+pub struct RenderContext<'a> {
+    view: wgpu::TextureView,
+    graphics: &'a mut Graphics,
+    camera: &'a types::Camera,
+    timings: &'a types::Timings,
+}
+
+impl<'a> RenderContext<'a> {
+    pub fn render(&mut self, layer: &mut impl Layer) -> anyhow::Result<()> {
+        layer.render(self.camera, self.timings, self.graphics, &self.view)?;
+        Ok(())
     }
 }
 

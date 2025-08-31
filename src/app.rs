@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crossbeam::channel::Receiver;
 use winit::{
     application::ApplicationHandler,
     dpi::LogicalSize,
@@ -11,7 +10,10 @@ use winit::{
 
 use crate::{
     controller::CameraController,
-    layer::scene::{DebugEvent, SceneLayer},
+    layer::{
+        gui::GuiLayer,
+        scene::{DebugEvent, SceneLayer},
+    },
     renderer::Renderer,
     types,
 };
@@ -54,20 +56,19 @@ impl ApplicationHandler<()> for App {
             let frame_timer = FrameTimer::new();
             let camera_controller = CameraController::new();
 
-            let mut renderer =
-                Renderer::try_new(window.clone()).expect("Failed to create renderer");
+            let renderer = Renderer::try_new(window.clone()).expect("Failed to create renderer");
 
-            let scene_layer =
-                SceneLayer::try_new(&renderer.graphics()).expect("Failed to create scene layer");
-
-            let debug_receiver = scene_layer.debug_rx().clone();
-
-            renderer.add_layer(Box::new(scene_layer));
+            let layers = Layers {
+                scene_layer: SceneLayer::try_new(&renderer.graphics())
+                    .expect("Failed to create scene layer"),
+                gui_layer: GuiLayer::try_new(&renderer.graphics(), window.clone())
+                    .expect("Failed to create gui layer"),
+            };
 
             State {
                 window,
                 renderer,
-                debug_receiver,
+                layers,
                 camera_controller,
                 frame_timer,
             }
@@ -110,7 +111,16 @@ impl ApplicationHandler<()> for App {
                     // Get current camera from controller
                     let camera = state.camera_controller.get_camera();
 
-                    match state.renderer.render(&camera, &timings) {
+                    let render_result =
+                        state
+                            .renderer
+                            .render_with(&camera, &timings, |mut context| {
+                                context.render(&mut state.layers.scene_layer)?;
+                                context.render(&mut state.layers.gui_layer)?;
+                                Ok(())
+                            });
+
+                    match render_result {
                         Ok(_) => {}
                         Err(e) => {
                             log::error!("Rendering error: {:?}", e);
@@ -118,7 +128,7 @@ impl ApplicationHandler<()> for App {
                         }
                     }
 
-                    while let Ok(debug_event) = state.debug_receiver.try_recv() {
+                    while let Some(debug_event) = state.layers.scene_layer.poll_debug_event() {
                         match debug_event {
                             DebugEvent::CullingStats {
                                 total_points,
@@ -165,9 +175,14 @@ impl ApplicationHandler<()> for App {
 pub struct State {
     window: Arc<Window>,
     renderer: Renderer,
-    debug_receiver: Receiver<DebugEvent>,
+    layers: Layers,
     camera_controller: CameraController,
     frame_timer: FrameTimer,
+}
+
+pub struct Layers {
+    scene_layer: SceneLayer,
+    gui_layer: GuiLayer,
 }
 
 struct FrameTimer {

@@ -3,11 +3,12 @@ use crate::{
     types::{Camera, Timings},
 };
 
+pub mod gui;
 pub mod scene;
 
 pub trait Layer {
     fn render(
-        &self,
+        &mut self,
         camera: &Camera,
         timings: &Timings,
         graphics: &Graphics,

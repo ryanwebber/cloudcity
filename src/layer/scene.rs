@@ -214,7 +214,7 @@ impl SceneLayer {
         });
 
         let depth_texture_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let (debug_tx, debug_rx) = crossbeam::channel::bounded(1);
+        let (debug_tx, debug_rx) = crossbeam::channel::bounded(16);
 
         Ok(Self {
             hexagon,
@@ -232,8 +232,8 @@ impl SceneLayer {
         })
     }
 
-    pub fn debug_rx(&self) -> &Receiver<DebugEvent> {
-        &self.debug_rx
+    pub fn poll_debug_event(&self) -> Option<DebugEvent> {
+        self.debug_rx.try_recv().ok()
     }
 
     fn create_random_instances(count: usize) -> Vec<storage::instance::Instance> {
@@ -524,7 +524,7 @@ impl Hexagon {
 
 impl Layer for SceneLayer {
     fn render(
-        &self,
+        &mut self,
         camera: &types::Camera,
         timings: &types::Timings,
         graphics: &Graphics,
