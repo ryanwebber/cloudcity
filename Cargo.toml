@@ -14,6 +14,7 @@ egui-winit = "0.32.1"
 encase = { version = "0.11.2", features = ["glam"] }
 env_logger = "0.11.8"
 glam = { version = "0.30.5", features = ["bytemuck"] }
+las = "0.9.5"
 log = "0.4.27"
 pollster = "0.4.0"
 rand = "0.8.5"

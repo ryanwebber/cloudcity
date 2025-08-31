@@ -21,7 +21,10 @@ struct Args {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Run the renderer
-    Visualize {
+    Visualize,
+
+    /// Inspect the point cloud dataset
+    Inspect {
         /// Paths to the LIDAR data files (ASPRS formatted .las files)
         #[arg(required = true)]
         data: Vec<PathBuf>,
@@ -30,13 +33,18 @@ enum Command {
 
 fn main() {
     env_logger::Builder::new().parse_env("CLOUDCITY_LOG").init();
-    app::run().expect("Error running application");
 
-    // let args = Args::parse();
-
-    // match args.command {
-    //     Command::Visualize { .. } => {
-    //         app::run().expect("Error running application");
-    //     }
-    // }
+    let args = Args::parse();
+    match args.command {
+        Command::Visualize => {
+            app::run().expect("Error running application");
+        }
+        Command::Inspect { data } => {
+            for path in data {
+                let reader = las::Reader::from_path(&path).expect("Error reading LAS file");
+                let header = reader.header();
+                println!("Header: {:#?}", header);
+            }
+        }
+    }
 }

@@ -29,10 +29,8 @@ pub struct SceneLayer {
     indirect_draw_args_buffer: wgpu::Buffer,
     culling_stats_buffer: wgpu::Buffer,
     // Buffered readbacks
-    debug_rx: Receiver<DebugEvent>,
-    debug_tx: Sender<DebugEvent>,
-    visible_instance_rx: Receiver<u32>,
-    visible_instance_tx: Sender<u32>,
+    debug_queue: DebugQueue,
+    instance_count_queue: InstanceCountQueue,
 }
 
 impl SceneLayer {
@@ -266,8 +264,9 @@ impl SceneLayer {
         });
 
         let depth_texture_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let (debug_tx, debug_rx) = crossbeam::channel::bounded(16);
-        let (visible_instance_tx, visible_instance_rx) = crossbeam::channel::bounded(16);
+
+        let debug_queue = DebugQueue::new();
+        let instance_count_queue = InstanceCountQueue::new();
 
         Ok(Self {
             hexagon,
@@ -281,15 +280,13 @@ impl SceneLayer {
             camera_uniforms,
             indirect_draw_args_buffer,
             culling_stats_buffer,
-            debug_rx,
-            debug_tx,
-            visible_instance_rx,
-            visible_instance_tx,
+            debug_queue,
+            instance_count_queue,
         })
     }
 
     pub fn poll_debug_event(&self) -> Option<DebugEvent> {
-        self.debug_rx.try_recv().ok()
+        self.debug_queue.poll_event()
     }
 
     fn create_random_instances(count: usize) -> Vec<storage::instance::Instance> {
@@ -483,8 +480,8 @@ impl SceneLayer {
                 .queue()
                 .submit(std::iter::once(readback_encoder.finish()));
 
-            let stats_tx_clone = self.debug_tx.clone();
-            let visible_instance_tx_clone = self.visible_instance_tx.clone();
+            let debug_tx = self.debug_queue.sender().clone();
+            let instance_count_tx = self.instance_count_queue.sender().clone();
             let culling_stats_readback_buffer = Arc::new(culling_stats_readback_buffer);
             culling_stats_readback_buffer.clone().slice(..).map_async(
                 wgpu::MapMode::Read,
@@ -492,12 +489,12 @@ impl SceneLayer {
                     if let Ok(..) = result {
                         let bytes = culling_stats_readback_buffer.slice(..).get_mapped_range();
                         let stats: &storage::uniform::CullingStats = bytemuck::from_bytes(&bytes);
-                        _ = stats_tx_clone.try_send(DebugEvent::CullingStats {
+                        _ = debug_tx.try_send(DebugEvent::CullingStats {
                             total_points: stats.total_points as usize,
                             visible_points: stats.visible_points as usize,
                         });
 
-                        _ = visible_instance_tx_clone.try_send(stats.visible_points);
+                        _ = instance_count_tx.try_send(stats.visible_points);
                     }
                 },
             );
@@ -655,7 +652,7 @@ impl Layer for SceneLayer {
             // The stats on how many instances are visible in the camera frustum will be out
             // of date by a frame or two, but we'll render approximately the same number of
             // instances each frame, this still looks visually correct.
-            let instances_to_draw = self.visible_instance_rx.try_recv().ok().unwrap_or(0);
+            let instances_to_draw = self.instance_count_queue.read_value();
 
             // Draw in batches pf 2^16 instances until all instances are drawn
             const BATCH_SIZE: usize = usize::pow(2, 16);
@@ -712,5 +709,52 @@ impl Layer for SceneLayer {
         self.depth_texture_view = self
             .depth_texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+    }
+}
+
+struct DebugQueue {
+    rx: Receiver<DebugEvent>,
+    tx: Sender<DebugEvent>,
+}
+
+impl DebugQueue {
+    pub fn new() -> Self {
+        let (tx, rx) = crossbeam::channel::bounded(16);
+        Self { rx, tx }
+    }
+
+    pub fn poll_event(&self) -> Option<DebugEvent> {
+        self.rx.try_recv().ok()
+    }
+
+    pub fn sender(&self) -> &Sender<DebugEvent> {
+        &self.tx
+    }
+}
+
+struct InstanceCountQueue {
+    rx: Receiver<u32>,
+    tx: Sender<u32>,
+    cached_value: u32,
+}
+
+impl InstanceCountQueue {
+    pub fn new() -> Self {
+        let (tx, rx) = crossbeam::channel::bounded(16);
+        Self {
+            rx,
+            tx,
+            cached_value: 0,
+        }
+    }
+
+    pub fn sender(&self) -> &Sender<u32> {
+        &self.tx
+    }
+
+    pub fn read_value(&mut self) -> u32 {
+        let value = self.rx.try_recv().ok().unwrap_or(self.cached_value);
+        self.cached_value = value;
+        value
     }
 }
