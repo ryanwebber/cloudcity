@@ -4,8 +4,8 @@ use clap::{Parser, Subcommand, arg, command};
 
 mod app;
 mod controller;
-mod gui;
-mod pipelines;
+mod layer;
+mod pipeline;
 mod renderer;
 mod storage;
 mod types;

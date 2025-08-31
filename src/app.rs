@@ -11,7 +11,8 @@ use winit::{
 
 use crate::{
     controller::CameraController,
-    renderer::{DebugEvent, Renderer},
+    layer::scene::{DebugEvent, SceneLayer},
+    renderer::Renderer,
     types,
 };
 
@@ -50,10 +51,18 @@ impl ApplicationHandler<()> for App {
                     .expect("Failed to create window"),
             );
 
-            let renderer = Renderer::try_new(window.clone()).expect("Failed to create renderer");
-            let debug_receiver = renderer.create_debug_receiver();
             let frame_timer = FrameTimer::new();
             let camera_controller = CameraController::new();
+
+            let mut renderer =
+                Renderer::try_new(window.clone()).expect("Failed to create renderer");
+
+            let scene_layer =
+                SceneLayer::try_new(&renderer.graphics()).expect("Failed to create scene layer");
+
+            let debug_receiver = scene_layer.debug_rx().clone();
+
+            renderer.add_layer(Box::new(scene_layer));
 
             State {
                 window,
