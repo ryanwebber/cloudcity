@@ -41,11 +41,54 @@ impl SceneLayer {
 
         let culling_pipeline = pipeline::CullingPipeline::new(&graphics.device());
 
-        // Create instance data with random points
-        let instances = Self::create_random_instances(10000);
+        // Create instance data with random points - increased for testing performance
+        let instances = Self::create_random_instances(500000);
         let instance_count = instances.len();
 
+        // Check GPU limits that might affect indirect drawing
+        let limits = graphics.device().limits();
+        log::info!("GPU limits:");
+        log::info!(
+            "  - max_storage_buffers_per_shader_stage: {}",
+            limits.max_storage_buffers_per_shader_stage
+        );
+        log::info!(
+            "  - max_compute_workgroup_size_x: {}",
+            limits.max_compute_workgroup_size_x
+        );
+        log::info!(
+            "  - max_compute_workgroups_per_dimension: {}",
+            limits.max_compute_workgroups_per_dimension
+        );
+        log::info!("  - max_vertex_buffers: {}", limits.max_vertex_buffers);
+        log::info!(
+            "  - max_vertex_attributes: {}",
+            limits.max_vertex_attributes
+        );
+        log::info!(
+            "  - max_vertex_buffer_array_stride: {}",
+            limits.max_vertex_buffer_array_stride
+        );
+
         log::debug!("Initial instance count: {}", instance_count);
+        log::info!("Creating renderer for {} points", instance_count);
+        log::info!("Buffer sizes:");
+        log::info!(
+            "  - Point positions: {} bytes",
+            std::mem::size_of::<glam::f32::Vec4>() * instance_count
+        );
+        log::info!(
+            "  - Visibility buffer: {} bytes",
+            std::mem::size_of::<u32>() * instance_count
+        );
+        log::info!(
+            "  - Compacted indices: {} bytes",
+            std::mem::size_of::<u32>() * instance_count
+        );
+        log::info!(
+            "  - Instance buffer: {} bytes",
+            std::mem::size_of::<storage::instance::Instance>() * instance_count
+        );
 
         // Create camera uniforms buffer
         let camera_uniforms = graphics.device().create_buffer(&wgpu::BufferDescriptor {
@@ -367,7 +410,7 @@ impl SceneLayer {
             compute_pass.set_bind_group(0, &self.culling_bind_group, &[]);
 
             // Dispatch culling compute shader
-            let workgroup_count = (self.instance_count + 63) / 64; // 64 threads per workgroup
+            let workgroup_count = (self.instance_count + 255) / 256; // 256 threads per workgroup
             compute_pass.dispatch_workgroups(workgroup_count as u32, 1, 1);
         }
 
@@ -396,7 +439,7 @@ impl SceneLayer {
             compute_pass.set_bind_group(0, &self.culling_bind_group, &[]);
 
             // Dispatch compaction compute shader
-            let workgroup_count = (self.instance_count + 63) / 64; // 64 threads per workgroup
+            let workgroup_count = (self.instance_count + 255) / 256; // 256 threads per workgroup
             compute_pass.dispatch_workgroups(workgroup_count as u32, 1, 1);
         }
 
@@ -422,7 +465,7 @@ impl SceneLayer {
                         label: Some("Scene Culling Readback Encoder"),
                     });
 
-            // Copy the culling stats buffer to the host
+            // Copy the culling stats buffer to the persistent readback buffer
             readback_encoder.copy_buffer_to_buffer(
                 &self.culling_stats_buffer,
                 0,

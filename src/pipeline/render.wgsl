@@ -68,10 +68,15 @@ fn vs_main(
     let r = f32(instance_color & 0x000000FFu) / 255.0;
     let g = f32((instance_color & 0x0000FF00u) >> 8u) / 255.0;
     let b = f32((instance_color & 0x00FF0000u) >> 16u) / 255.0;
+
+    var color = vec4<f32>(0.2, 0.2, 0.2, 1.0);
+    if instance_index > 96000u {
+        color = vec4<f32>(1.0, 0.0, 1.0, 1.0);
+    }
     
     return VertexOutput(
         clip_pos,
-        vec4<f32>(r, g, b, 1.0),
+        color,
         model.position
     );
 }

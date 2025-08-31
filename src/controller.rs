@@ -40,7 +40,7 @@ pub struct CameraController {
 impl CameraController {
     pub fn new() -> Self {
         Self {
-            position: Vec3::new(0.0, 0.0, 5.0),
+            position: Vec3::new(0.0, 0.0, 15.0),
             rotation: Vec3::new(0.0, 0.0, 0.0),
             target_rotation: Vec3::new(0.0, 0.0, 0.0),
 
