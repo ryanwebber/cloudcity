@@ -148,18 +148,9 @@ impl ViewModel {
     }
 
     fn update_timings(&mut self, timings: &types::Timings) {
-        if let Some(timing_stats) = &mut self.timing_stats_section {
-            timing_stats.timings.frame = timings.frame;
-            timing_stats.timings.time_since_start = timings.time_since_start;
-            if timings.frame % 10 == 0 {
-                timing_stats.timings.fps = timings.fps;
-                timing_stats.timings.time_since_last_frame = timings.time_since_last_frame;
-            }
-        } else {
-            self.timing_stats_section = Some(TimingStatsSection {
-                timings: timings.clone(),
-            });
-        }
+        self.timing_stats_section = Some(TimingStatsSection {
+            timings: timings.clone(),
+        });
     }
 
     fn handle_debug_event(&mut self, debug_event: DebugEvent) {
@@ -213,23 +204,20 @@ impl TimingStatsSection {
     fn ui(&self, ui: &mut egui::Ui) {
         draw_section(ui, "Timing", |ui| {
             ui.label("FPS:");
-            ui.label(egui::RichText::new(format!("{:.0}", self.timings.fps)).monospace());
-
-            ui.end_row();
-
-            ui.label("Frame:");
-            ui.label(egui::RichText::new(format!("{}", self.timings.frame)).monospace());
+            ui.label(egui::RichText::new(format!("{:.0}", self.timings.average_fps)).monospace());
 
             ui.end_row();
 
             ui.label("Frame Time:");
             ui.label(
-                egui::RichText::new(format!(
-                    "{}ms",
-                    self.timings.time_since_last_frame.as_millis()
-                ))
-                .monospace(),
+                egui::RichText::new(format!("{}ms", self.timings.average_frame_time.as_millis()))
+                    .monospace(),
             );
+
+            ui.end_row();
+
+            ui.label("Frame:");
+            ui.label(egui::RichText::new(format!("{}", self.timings.frame)).monospace());
 
             ui.end_row();
 

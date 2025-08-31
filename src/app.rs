@@ -186,6 +186,8 @@ struct FrameTimer {
 }
 
 impl FrameTimer {
+    const RUNNING_AVERAGE_FRAME_TIMES_COUNT: usize = 30;
+
     pub fn new() -> Self {
         Self {
             frame: 0,
@@ -201,7 +203,7 @@ impl FrameTimer {
 
             // Store the last 10 frame times
             self.average_frame_times.push_back(elapsed_frame_time);
-            if self.average_frame_times.len() > 10 {
+            if self.average_frame_times.len() > Self::RUNNING_AVERAGE_FRAME_TIMES_COUNT {
                 self.average_frame_times.pop_front();
             }
 
@@ -209,11 +211,12 @@ impl FrameTimer {
             let average_frame_time = self.average_frame_times.iter().sum::<std::time::Duration>()
                 / self.average_frame_times.len() as u32;
 
-            let fps = 1.0 / average_frame_time.as_secs_f32();
+            let average_fps = 1.0 / average_frame_time.as_secs_f32();
 
             Some(types::Timings {
-                fps,
                 frame: self.frame,
+                average_fps,
+                average_frame_time,
                 time_since_start: self.start_time.elapsed(),
                 time_since_last_frame: elapsed_frame_time,
             })

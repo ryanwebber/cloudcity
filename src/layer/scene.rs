@@ -31,6 +31,8 @@ pub struct SceneLayer {
     // Buffered readbacks
     debug_rx: Receiver<DebugEvent>,
     debug_tx: Sender<DebugEvent>,
+    visible_instance_rx: Receiver<u32>,
+    visible_instance_tx: Sender<u32>,
 }
 
 impl SceneLayer {
@@ -42,7 +44,7 @@ impl SceneLayer {
         let culling_pipeline = pipeline::CullingPipeline::new(&graphics.device());
 
         // Create instance data with random points - increased for testing performance
-        let instances = Self::create_random_instances(500000);
+        let instances = Self::create_random_instances(250_000);
         let instance_count = instances.len();
 
         // Check GPU limits that might affect indirect drawing
@@ -265,6 +267,7 @@ impl SceneLayer {
 
         let depth_texture_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let (debug_tx, debug_rx) = crossbeam::channel::bounded(16);
+        let (visible_instance_tx, visible_instance_rx) = crossbeam::channel::bounded(16);
 
         Ok(Self {
             hexagon,
@@ -280,6 +283,8 @@ impl SceneLayer {
             culling_stats_buffer,
             debug_rx,
             debug_tx,
+            visible_instance_rx,
+            visible_instance_tx,
         })
     }
 
@@ -479,6 +484,7 @@ impl SceneLayer {
                 .submit(std::iter::once(readback_encoder.finish()));
 
             let stats_tx_clone = self.debug_tx.clone();
+            let visible_instance_tx_clone = self.visible_instance_tx.clone();
             let culling_stats_readback_buffer = Arc::new(culling_stats_readback_buffer);
             culling_stats_readback_buffer.clone().slice(..).map_async(
                 wgpu::MapMode::Read,
@@ -490,6 +496,8 @@ impl SceneLayer {
                             total_points: stats.total_points as usize,
                             visible_points: stats.visible_points as usize,
                         });
+
+                        _ = visible_instance_tx_clone.try_send(stats.visible_points);
                     }
                 },
             );
@@ -640,10 +648,44 @@ impl Layer for SceneLayer {
                 wgpu::IndexFormat::Uint32,
             );
 
+            // Strategy to render: We've compacted all the instances to render to the front
+            // of the compact indices buffer. We use the culling stats from some previous frame
+            // to determine how many instances to draw, and draw in batches of 2^16 instances
+            // to avoid platform-specific limits on the number of instances per draw call.
+            // The stats on how many instances are visible in the camera frustum will be out
+            // of date by a frame or two, but we'll render approximately the same number of
+            // instances each frame, this still looks visually correct.
+            let instances_to_draw = self.visible_instance_rx.try_recv().ok().unwrap_or(0);
+
+            // Draw in batches pf 2^16 instances until all instances are drawn
+            const BATCH_SIZE: usize = usize::pow(2, 16);
+
+            // Round up to the nearest integer for the number of draw calls
+            let batch_count: usize = (instances_to_draw as usize + BATCH_SIZE - 1) / BATCH_SIZE;
+
+            log::trace!(
+                "Drawing {} instances in batches of {} ({} draw calls)",
+                instances_to_draw,
+                BATCH_SIZE,
+                batch_count
+            );
+
+            for i in 0..batch_count {
+                let batch_start = (i * BATCH_SIZE) as u32;
+                let batch_end = std::cmp::min(batch_start + BATCH_SIZE as u32, instances_to_draw);
+                render_pass.draw_indexed(0..12, 0, batch_start..batch_end);
+            }
+
+            // NOTE: Keeping this here for reference. We can use indirect rendering directly
+            // to reduce the number of draw calls, but it seems like we're hitting the limit
+            // on the number of instances per draw call. The right solution is to use multi-draw
+            // indirect instance rendering, but that's not supported by my GPU yet.
+            //
             // Draw using indirect rendering with GPU-computed draw args
             // The compute shader has already updated indirect_draw_args with the correct visible count
             // and the vertex shader will use compacted_indices[gl_InstanceIndex] to get the right instance
-            render_pass.draw_indexed_indirect(&self.indirect_draw_args_buffer, 0);
+            // render_pass.draw_indexed_indirect(&self.indirect_draw_args_buffer, 0);
+            _ = &self.indirect_draw_args_buffer;
         }
 
         graphics.queue().submit(std::iter::once(encoder.finish()));
