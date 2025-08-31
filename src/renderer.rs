@@ -68,7 +68,6 @@ pub struct Graphics {
     surface_config: wgpu::SurfaceConfiguration,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    layers: Vec<Box<dyn Layer>>,
 }
 
 impl Graphics {
@@ -127,7 +126,6 @@ impl Graphics {
             surface_config,
             device,
             queue,
-            layers: vec![],
         })
     }
 
@@ -139,10 +137,6 @@ impl Graphics {
         self.surface_config.width = new_size.width;
         self.surface_config.height = new_size.height;
         self.surface.configure(&self.device, &self.surface_config);
-
-        for layer in self.layers.iter_mut() {
-            layer.resize(new_size);
-        }
     }
 
     pub fn device(&self) -> &wgpu::Device {

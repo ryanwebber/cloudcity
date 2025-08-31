@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::VecDeque, sync::Arc};
 
 use winit::{
     application::ApplicationHandler,
@@ -10,10 +10,7 @@ use winit::{
 
 use crate::{
     controller::CameraController,
-    layer::{
-        gui::GuiLayer,
-        scene::{DebugEvent, SceneLayer},
-    },
+    layer::{Layer, gui::GuiLayer, scene::SceneLayer},
     renderer::Renderer,
     types,
 };
@@ -128,23 +125,9 @@ impl ApplicationHandler<()> for App {
                         }
                     }
 
+                    // Handle debug events
                     while let Some(debug_event) = state.layers.scene_layer.poll_debug_event() {
-                        match debug_event {
-                            DebugEvent::CullingStats {
-                                total_points,
-                                visible_points,
-                            } => {
-                                let title = format!(
-                                    "{} - Points: {}/{} ({:.1}% culled)",
-                                    env!("CARGO_PKG_NAME"),
-                                    visible_points,
-                                    total_points,
-                                    (total_points - visible_points) as f32 / total_points as f32
-                                        * 100.0
-                                );
-                                state.window.set_title(&title);
-                            }
-                        }
+                        state.layers.gui_layer.handle_debug_event(debug_event);
                     }
                 }
 
@@ -152,6 +135,16 @@ impl ApplicationHandler<()> for App {
             }
             WindowEvent::Resized(new_size) => {
                 state.renderer.resize_surface(new_size);
+
+                state
+                    .layers
+                    .scene_layer
+                    .resize(&state.renderer.graphics(), new_size);
+
+                state
+                    .layers
+                    .gui_layer
+                    .resize(&state.renderer.graphics(), new_size);
             }
             _ => (),
         }
@@ -189,6 +182,7 @@ struct FrameTimer {
     frame: u32,
     start_time: std::time::Instant,
     last_frame_time: Option<std::time::Instant>,
+    average_frame_times: VecDeque<std::time::Duration>,
 }
 
 impl FrameTimer {
@@ -197,15 +191,31 @@ impl FrameTimer {
             frame: 0,
             start_time: std::time::Instant::now(),
             last_frame_time: None,
+            average_frame_times: VecDeque::new(),
         }
     }
 
     pub fn tick(&mut self) -> Option<types::Timings> {
         let timings = if let Some(last_frame_time) = self.last_frame_time {
+            let elapsed_frame_time = last_frame_time.elapsed();
+
+            // Store the last 10 frame times
+            self.average_frame_times.push_back(elapsed_frame_time);
+            if self.average_frame_times.len() > 10 {
+                self.average_frame_times.pop_front();
+            }
+
+            // Calculate the average frame time
+            let average_frame_time = self.average_frame_times.iter().sum::<std::time::Duration>()
+                / self.average_frame_times.len() as u32;
+
+            let fps = 1.0 / average_frame_time.as_secs_f32();
+
             Some(types::Timings {
+                fps,
                 frame: self.frame,
                 time_since_start: self.start_time.elapsed(),
-                time_since_last_frame: last_frame_time.elapsed(),
+                time_since_last_frame: elapsed_frame_time,
             })
         } else {
             None

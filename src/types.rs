@@ -41,6 +41,7 @@ impl Into<Transform> for glam::Mat4 {
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Timings {
+    pub fps: f32,
     pub frame: u32,
     pub time_since_start: std::time::Duration,
     pub time_since_last_frame: std::time::Duration,

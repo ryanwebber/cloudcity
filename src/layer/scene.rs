@@ -4,12 +4,19 @@ use crossbeam::channel::{Receiver, Sender};
 use glam::Vec4;
 use wgpu::util::DeviceExt;
 
-use crate::{layer::Layer, pipeline, renderer::Graphics, storage, types};
+use crate::{
+    layer::Layer,
+    pipeline,
+    renderer::Graphics,
+    storage,
+    types::{self},
+};
 
 pub struct SceneLayer {
     hexagon: Hexagon,
     instance_count: usize,
     // Textures
+    depth_texture: wgpu::Texture,
     depth_texture_view: wgpu::TextureView,
     // Bind groups
     culling_bind_group: wgpu::BindGroup,
@@ -35,7 +42,7 @@ impl SceneLayer {
         let culling_pipeline = pipeline::CullingPipeline::new(&graphics.device());
 
         // Create instance data with random points
-        let instances = Self::create_random_instances(5000); // Increased from 1000 to 5000
+        let instances = Self::create_random_instances(10000);
         let instance_count = instances.len();
 
         log::debug!("Initial instance count: {}", instance_count);
@@ -219,6 +226,7 @@ impl SceneLayer {
         Ok(Self {
             hexagon,
             instance_count,
+            depth_texture,
             depth_texture_view,
             culling_bind_group,
             render_bind_group,
@@ -598,5 +606,26 @@ impl Layer for SceneLayer {
         graphics.queue().submit(std::iter::once(encoder.finish()));
 
         Ok(())
+    }
+
+    fn resize(&mut self, graphics: &Graphics, new_size: winit::dpi::PhysicalSize<u32>) {
+        self.depth_texture = graphics.device().create_texture(&wgpu::TextureDescriptor {
+            label: Some("Depth Texture"),
+            size: wgpu::Extent3d {
+                width: new_size.width,
+                height: new_size.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+
+        self.depth_texture_view = self
+            .depth_texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
     }
 }

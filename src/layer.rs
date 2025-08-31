@@ -15,7 +15,7 @@ pub trait Layer {
         view: &wgpu::TextureView,
     ) -> anyhow::Result<()>;
 
-    fn resize(&mut self, _new_size: winit::dpi::PhysicalSize<u32>) {
+    fn resize(&mut self, _: &Graphics, _: winit::dpi::PhysicalSize<u32>) {
         // Do nothing by default
     }
 }
