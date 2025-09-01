@@ -23,7 +23,7 @@ impl CullingPipeline {
                     },
                     count: None,
                 },
-                // Point positions buffer
+                // Instances buffer
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::COMPUTE,

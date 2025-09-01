@@ -3,7 +3,7 @@
 
 // Input buffers
 @group(0) @binding(0) var<uniform> camera_uniforms: CameraUniforms;
-@group(0) @binding(1) var<storage, read> point_positions: array<vec4<f32>>;
+@group(0) @binding(1) var<storage, read> instances: array<InstanceInput>;
 @group(0) @binding(2) var<storage, read_write> visibility_buffer: array<u32>;
 @group(0) @binding(3) var<storage, read_write> indirect_draw_args: IndirectDrawArgs;
 @group(0) @binding(4) var<storage, read_write> compacted_indices: array<u32>;
@@ -35,6 +35,11 @@ struct CullingStats {
     visible_points: atomic<u32>,
 }
 
+struct InstanceInput {
+    @location(2) position: vec3<f32>,
+    @location(3) color: u32,
+}
+
 fn point_in_frustum(point: vec3<f32>, camera_uniform: CameraUniforms) -> bool {
     // 1. Extend to homogeneous coordinate
     let p_world = vec4<f32>(point, 1.0);
@@ -56,12 +61,12 @@ fn cull_points(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let point_index = global_id.x;
 
     // Check if this thread is processing a valid point
-    if (point_index >= arrayLength(&point_positions)) {
+    if (point_index >= arrayLength(&instances)) {
         return;
     }
 
     // Get point position
-    let point = point_positions[point_index].xyz;
+    let point = instances[point_index].position;
 
     // Check if point is visible
     let is_visible = point_in_frustum(point, camera_uniforms);
@@ -74,7 +79,7 @@ fn cull_points(@builtin(global_invocation_id) global_id: vec3<u32>) {
 @compute @workgroup_size(256)
 fn compact_visible_points(@builtin(global_invocation_id) global_id: vec3<u32>, @builtin(workgroup_id) workgroup_id: vec3<u32>, @builtin(local_invocation_id) local_id: vec3<u32>) {
     let point_index = global_id.x;
-    let point_count = arrayLength(&point_positions);
+    let point_count = arrayLength(&instances);
 
     if (point_index >= point_count) {
         return;

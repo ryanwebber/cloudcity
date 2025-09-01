@@ -15,29 +15,37 @@ use crate::{
     types,
 };
 
-pub fn run() -> anyhow::Result<()> {
+pub fn run(
+    points: Vec<types::RenderPoint>,
+    camera_hints: types::CameraHints,
+) -> anyhow::Result<()> {
     let event_loop: EventLoop<()> = EventLoop::with_user_event().build()?;
     event_loop.set_control_flow(ControlFlow::Poll);
 
-    let mut app = App::new();
+    let mut app = App::new(points, camera_hints);
     event_loop.run_app(&mut app)?;
 
     Ok(())
 }
 
 pub struct App {
-    state: Option<State>,
+    state: State,
 }
 
 impl App {
-    pub fn new() -> Self {
-        Self { state: None }
+    pub fn new(points: Vec<types::RenderPoint>, camera_hints: types::CameraHints) -> Self {
+        Self {
+            state: State::Uninitialized {
+                points,
+                camera_hints,
+            },
+        }
     }
 }
 
 impl ApplicationHandler<()> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let state = self.state.get_or_insert_with(|| {
+        self.state.promote_if_needed(|points, camera_hints| {
             log::debug!("Initializing application state...");
             let size = LogicalSize::new(800, 600);
             let attributes = Window::default_attributes()
@@ -51,18 +59,18 @@ impl ApplicationHandler<()> for App {
             );
 
             let frame_timer = FrameTimer::new();
-            let camera_controller = CameraController::new();
+            let camera_controller = CameraController::new(camera_hints);
 
             let renderer = Renderer::try_new(window.clone()).expect("Failed to create renderer");
 
             let layers = Layers {
-                scene_layer: SceneLayer::try_new(&renderer.graphics())
+                scene_layer: SceneLayer::try_new(&renderer.graphics(), &points)
                     .expect("Failed to create scene layer"),
                 gui_layer: GuiLayer::try_new(&renderer.graphics(), window.clone())
                     .expect("Failed to create gui layer"),
             };
 
-            State {
+            State::Initialized {
                 window,
                 renderer,
                 layers,
@@ -70,8 +78,6 @@ impl ApplicationHandler<()> for App {
                 frame_timer,
             }
         });
-
-        _ = state;
     }
 
     fn window_event(
@@ -80,18 +86,23 @@ impl ApplicationHandler<()> for App {
         window_id: WindowId,
         event: WindowEvent,
     ) {
-        let Some(state) = &mut self.state else {
+        let State::Initialized {
+            window,
+            camera_controller,
+            frame_timer,
+            renderer,
+            layers,
+        } = &mut self.state
+        else {
             return;
         };
 
-        if state.window.id() != window_id {
+        if window.id() != window_id {
             return;
         }
 
         // Handle camera controller events first
-        state
-            .camera_controller
-            .handle_window_event(&event, &state.window);
+        camera_controller.handle_window_event(&event, &window);
 
         match event {
             WindowEvent::CloseRequested => {
@@ -99,23 +110,18 @@ impl ApplicationHandler<()> for App {
             }
             WindowEvent::RedrawRequested => {
                 // Update camera controller with frame timing
-                if let Some(timings) = state.frame_timer.tick() {
+                if let Some(timings) = frame_timer.tick() {
                     // Update camera controller
-                    state
-                        .camera_controller
-                        .update(timings.time_since_last_frame);
+                    camera_controller.update(timings.time_since_last_frame);
 
                     // Get current camera from controller
-                    let camera = state.camera_controller.get_camera();
+                    let camera = camera_controller.get_camera();
 
-                    let render_result =
-                        state
-                            .renderer
-                            .render_with(&camera, &timings, |mut context| {
-                                context.render(&mut state.layers.scene_layer)?;
-                                context.render(&mut state.layers.gui_layer)?;
-                                Ok(())
-                            });
+                    let render_result = renderer.render_with(&camera, &timings, |mut context| {
+                        context.render(&mut layers.scene_layer)?;
+                        context.render(&mut layers.gui_layer)?;
+                        Ok(())
+                    });
 
                     match render_result {
                         Ok(_) => {}
@@ -126,25 +132,17 @@ impl ApplicationHandler<()> for App {
                     }
 
                     // Handle debug events
-                    while let Some(debug_event) = state.layers.scene_layer.poll_debug_event() {
-                        state.layers.gui_layer.handle_debug_event(debug_event);
+                    while let Some(debug_event) = layers.scene_layer.poll_debug_event() {
+                        layers.gui_layer.handle_debug_event(debug_event);
                     }
                 }
 
-                state.window.request_redraw();
+                window.request_redraw();
             }
             WindowEvent::Resized(new_size) => {
-                state.renderer.resize_surface(new_size);
-
-                state
-                    .layers
-                    .scene_layer
-                    .resize(&state.renderer.graphics(), new_size);
-
-                state
-                    .layers
-                    .gui_layer
-                    .resize(&state.renderer.graphics(), new_size);
+                renderer.resize_surface(new_size);
+                layers.scene_layer.resize(&renderer.graphics(), new_size);
+                layers.gui_layer.resize(&renderer.graphics(), new_size);
             }
             _ => (),
         }
@@ -156,21 +154,47 @@ impl ApplicationHandler<()> for App {
         _device_id: winit::event::DeviceId,
         event: DeviceEvent,
     ) {
-        let Some(state) = &mut self.state else {
+        let State::Initialized {
+            camera_controller, ..
+        } = &mut self.state
+        else {
             return;
         };
 
         // Handle raw mouse events for camera control when cursor is locked
-        state.camera_controller.handle_device_event(&event);
+        camera_controller.handle_device_event(&event);
     }
 }
 
-pub struct State {
-    window: Arc<Window>,
-    renderer: Renderer,
-    layers: Layers,
-    camera_controller: CameraController,
-    frame_timer: FrameTimer,
+enum State {
+    Uninitialized {
+        points: Vec<types::RenderPoint>,
+        camera_hints: types::CameraHints,
+    },
+    Initialized {
+        window: Arc<Window>,
+        renderer: Renderer,
+        layers: Layers,
+        camera_controller: CameraController,
+        frame_timer: FrameTimer,
+    },
+}
+
+impl State {
+    pub fn promote_if_needed(
+        &mut self,
+        f: impl FnOnce(Vec<types::RenderPoint>, types::CameraHints) -> State,
+    ) {
+        if let State::Uninitialized {
+            points,
+            camera_hints,
+        } = self
+        {
+            let points = std::mem::take(points);
+            let camera_hints = std::mem::take(camera_hints);
+            *self = f(points, camera_hints);
+        }
+    }
 }
 
 pub struct Layers {

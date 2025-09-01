@@ -1,7 +1,6 @@
-use std::sync::Arc;
+use std::{sync::Arc, u8};
 
 use crossbeam::channel::{Receiver, Sender};
-use glam::Vec4;
 use wgpu::util::DeviceExt;
 
 use crate::{
@@ -9,7 +8,7 @@ use crate::{
     pipeline,
     renderer::Graphics,
     storage,
-    types::{self},
+    types::{self, RenderPoint},
 };
 
 pub struct SceneLayer {
@@ -34,7 +33,7 @@ pub struct SceneLayer {
 }
 
 impl SceneLayer {
-    pub fn try_new(graphics: &Graphics) -> anyhow::Result<Self> {
+    pub fn try_new(graphics: &Graphics, points: &[RenderPoint]) -> anyhow::Result<Self> {
         let hexagon = Hexagon::create(graphics.device());
         let render_pipeline =
             pipeline::RenderPipeline::new(graphics.device(), graphics.surface_config().format);
@@ -42,7 +41,19 @@ impl SceneLayer {
         let culling_pipeline = pipeline::CullingPipeline::new(&graphics.device());
 
         // Create instance data with random points - increased for testing performance
-        let instances = Self::create_random_instances(250_000);
+        let instances: Vec<storage::instance::Instance> = points
+            .iter()
+            .map(|p| storage::instance::Instance {
+                position: p.position,
+                color: storage::instance::Color::from_rgba(
+                    p.color.x,
+                    p.color.y,
+                    p.color.z,
+                    u8::MAX,
+                ),
+            })
+            .collect();
+
         let instance_count = instances.len();
 
         // Check GPU limits that might affect indirect drawing
@@ -74,10 +85,6 @@ impl SceneLayer {
         log::info!("Creating renderer for {} points", instance_count);
         log::info!("Buffer sizes:");
         log::info!(
-            "  - Point positions: {} bytes",
-            std::mem::size_of::<glam::f32::Vec4>() * instance_count
-        );
-        log::info!(
             "  - Visibility buffer: {} bytes",
             std::mem::size_of::<u32>() * instance_count
         );
@@ -95,14 +102,6 @@ impl SceneLayer {
             label: Some("Scene Camera Uniforms"),
             size: std::mem::size_of::<storage::uniform::Camera>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // Create GPU culling buffers
-        let point_positions_buffer = graphics.device().create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Point Positions Buffer"),
-            size: (std::mem::size_of::<glam::f32::Vec4>() * instance_count) as u64, // Vec4 for alignment
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
@@ -155,18 +154,6 @@ impl SceneLayer {
         graphics
             .queue()
             .write_buffer(&instance_buffer, 0, bytemuck::cast_slice(&instances));
-
-        // Populate the point positions buffer
-        let point_positions: Vec<glam::f32::Vec4> = instances
-            .iter()
-            .map(|i| Vec4::new(i.position.x, i.position.y, i.position.z, 0.0))
-            .collect();
-
-        graphics.queue().write_buffer(
-            &point_positions_buffer,
-            0,
-            bytemuck::cast_slice(&point_positions[..]),
-        );
 
         // Initialize indirect draw args buffer
         let initial_draw_args = [12u32, 0u32, 0u32, 0u32, 0u32]; // vertex_count, instance_count, first_index, base_vertex, first_instance
@@ -226,7 +213,7 @@ impl SceneLayer {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: point_positions_buffer.as_entire_binding(),
+                        resource: instance_buffer.as_entire_binding(),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
@@ -287,47 +274,6 @@ impl SceneLayer {
 
     pub fn poll_debug_event(&self) -> Option<DebugEvent> {
         self.debug_queue.poll_event()
-    }
-
-    fn create_random_instances(count: usize) -> Vec<storage::instance::Instance> {
-        use rand::Rng;
-        let mut rng = rand::thread_rng();
-
-        (0..count)
-            .map(|_| {
-                // Random unit-sphere point
-                let unit_sphere = {
-                    let x = rng.gen_range(-1.0..1.0);
-                    let y = rng.gen_range(-1.0..1.0);
-                    let z = rng.gen_range(-1.0..1.0);
-                    let distance = f32::sqrt(x * x + y * y + z * z);
-                    let x = x / distance;
-                    let y = y / distance;
-                    let z = z / distance;
-                    glam::f32::vec3(x, y, z)
-                };
-
-                let position = unit_sphere * rng.gen_range(5.0..20.0);
-
-                let color = if position.z < 0.0 {
-                    storage::instance::Color::from_rgba(0, 12, 255, 255)
-                } else {
-                    // Create depth-based color gradient: red (near) to green (far)
-                    let distance_from_camera = position.length();
-                    let normalized_distance = (distance_from_camera - 5.0) / 15.0; // Normalize to 0.0-1.0
-                    let normalized_distance = normalized_distance.clamp(0.0, 1.0);
-
-                    // Red component decreases with distance, Green component increases with distance
-                    let r = ((1.0 - normalized_distance) * 255.0) as u8;
-                    let g = (normalized_distance * 255.0) as u8;
-                    let b = 0; // No blue component
-
-                    storage::instance::Color::from_rgba(r, g, b, 255)
-                };
-
-                storage::instance::Instance { position, color }
-            })
-            .collect()
     }
 
     fn update_camera_uniforms(&self, camera: &types::Camera, graphics: &Graphics) {

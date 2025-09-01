@@ -1,4 +1,4 @@
-use glam::f32;
+use glam::{U8Vec4, Vec3, f32};
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Camera {
@@ -16,6 +16,23 @@ pub struct Clipping {
 #[derive(Clone, PartialEq, Debug)]
 pub enum Lens {
     Perspective { fov: f32, focal_distance: f32 },
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct CameraHints {
+    pub origin: Option<f32::Vec3>,
+    pub near_clip: Option<f32>,
+    pub far_clip: Option<f32>,
+}
+
+impl Default for CameraHints {
+    fn default() -> Self {
+        Self {
+            origin: None,
+            near_clip: None,
+            far_clip: None,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -46,4 +63,10 @@ pub struct Timings {
     pub average_frame_time: std::time::Duration,
     pub time_since_start: std::time::Duration,
     pub time_since_last_frame: std::time::Duration,
+}
+
+#[derive(Clone, PartialEq, Debug)]
+pub struct RenderPoint {
+    pub position: Vec3,
+    pub color: U8Vec4,
 }

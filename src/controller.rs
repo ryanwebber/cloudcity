@@ -4,7 +4,7 @@ use winit::event::{DeviceEvent, ElementState, KeyEvent, MouseButton, WindowEvent
 use winit::keyboard::{Key, NamedKey};
 use winit::window::Window;
 
-use crate::types::{Camera, Clipping, Lens, Transform};
+use crate::types::{Camera, CameraHints, Clipping, Lens, Transform};
 
 pub struct CameraController {
     // Camera state
@@ -38,9 +38,9 @@ pub struct CameraController {
 }
 
 impl CameraController {
-    pub fn new() -> Self {
+    pub fn new(hints: CameraHints) -> Self {
         Self {
-            position: Vec3::new(0.0, 0.0, 15.0),
+            position: hints.origin.unwrap_or(Vec3::new(0.0, 0.0, 15.0)),
             rotation: Vec3::new(0.0, 0.0, 0.0),
             target_rotation: Vec3::new(0.0, 0.0, 0.0),
 
@@ -53,14 +53,14 @@ impl CameraController {
 
             cursor_locked: false,
 
-            move_speed: 5.0,
+            move_speed: 50.0,
             mouse_sensitivity: 0.002, // Reduced sensitivity for smoother movement
             rotation_smoothing: 0.4,  // Slightly more smoothing for better feel
 
             fov: 50.0,
             focal_distance: 10.5,
-            near: 0.1,
-            far: 100.0,
+            near: hints.near_clip.unwrap_or(0.1),
+            far: hints.far_clip.unwrap_or(3000.0),
         }
     }
 
@@ -109,7 +109,7 @@ impl CameraController {
                 };
 
                 // Update movement speed (clamp to reasonable bounds)
-                self.move_speed = (self.move_speed - speed_change).clamp(0.1, 50.0);
+                self.move_speed = (self.move_speed - speed_change).clamp(0.1, 350.0);
             }
 
             _ => {}
