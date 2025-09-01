@@ -2,6 +2,8 @@
 
 A point-cloud renderer for lidar data generated for city surveying and mapping.
 
+![CloudCity Screenshot](.github/screenshot.png)
+
 ## Getting Started
 
 I built this specifically to render the LAS lidar survey data of the city of Vancouver, BC (Canada),
